@@ -1,0 +1,6 @@
+{
+  "name": "Rekapan Menu SPPG",
+  "description": "Aplikasi pencatatan menu harian SPPG per akun email dengan arsip bulanan, krop foto serentak, dan ekspor PDF presisi ukuran F4.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

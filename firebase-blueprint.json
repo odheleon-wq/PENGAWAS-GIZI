@@ -1,0 +1,235 @@
+{
+  "entities": {
+    "SppgUserProfile": {
+      "title": "SppgUserProfile",
+      "description": "Identitas SPPG dan konfigurasi dashboard terisolasi per email pengguna aktif.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID pemilik dashboard.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "description": "Email aktif pengguna yang masuk.",
+          "minLength": 3,
+          "maxLength": 200
+        },
+        "reportTitle": {
+          "type": "string",
+          "description": "Judul banner laporan PDF (misal: REKAPAN MENU SMP).",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "namaSppg": {
+          "type": "string",
+          "description": "Nama unit SPPG.",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "idSppg": {
+          "type": "string",
+          "description": "Kode ID SPPG.",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "alamat": {
+          "type": "string",
+          "description": "Alamat lengkap SPPG.",
+          "maxLength": 300
+        },
+        "kabKota": {
+          "type": "string",
+          "description": "Kabupaten atau Kota.",
+          "maxLength": 100
+        },
+        "provinsi": {
+          "type": "string",
+          "description": "Nama Provinsi.",
+          "maxLength": 100
+        },
+        "namaSppi": {
+          "type": "string",
+          "description": "Nama penanggung jawab SPPI/AG.",
+          "maxLength": 150
+        },
+        "nomorHp": {
+          "type": "string",
+          "description": "Nomor handphone aktif penanggung jawab.",
+          "maxLength": 30
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp pembuatan profil."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp pembaruan profil."
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "reportTitle",
+        "namaSppg",
+        "idSppg",
+        "alamat",
+        "kabKota",
+        "provinsi",
+        "namaSppi",
+        "nomorHp",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MonthlyArchive": {
+      "title": "MonthlyArchive",
+      "description": "Ringkasan arsip rekapan menu per satu bulan untuk satu akun SPPG.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID pemilik arsip.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "monthKey": {
+          "type": "string",
+          "description": "Kunci bulan format YYYY-MM.",
+          "pattern": "^[0-9]{4}-[0-9]{2}$",
+          "minLength": 7,
+          "maxLength": 7
+        },
+        "year": {
+          "type": "integer",
+          "description": "Tahun kalender arsip."
+        },
+        "month": {
+          "type": "integer",
+          "description": "Bulan kalender (1-12)."
+        },
+        "periodeLabel": {
+          "type": "string",
+          "description": "Label periode bulan untuk header laporan (misal: NOVEMBER 2026).",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "entryCount": {
+          "type": "integer",
+          "description": "Jumlah hari menu yang tersimpan di bulan ini."
+        },
+        "photoCount": {
+          "type": "integer",
+          "description": "Jumlah entri yang sudah memiliki foto menu serentak."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp pembuatan arsip bulan."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp pembaruan arsip bulan."
+        }
+      },
+      "required": [
+        "uid",
+        "monthKey",
+        "year",
+        "month",
+        "periodeLabel",
+        "entryCount",
+        "photoCount",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "DailyMenuEntry": {
+      "title": "DailyMenuEntry",
+      "description": "Entri menu harian dan foto ompreng yang telah dikrop serentak dalam suatu bulan.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID pemilik entri.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "monthKey": {
+          "type": "string",
+          "description": "Kunci bulan format YYYY-MM.",
+          "pattern": "^[0-9]{4}-[0-9]{2}$",
+          "minLength": 7,
+          "maxLength": 7
+        },
+        "dateIso": {
+          "type": "string",
+          "description": "Tanggal format YYYY-MM-DD.",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "minLength": 10,
+          "maxLength": 10
+        },
+        "hariKe": {
+          "type": "integer",
+          "description": "Urutan Hari Ke dalam rekapan bulan."
+        },
+        "namaMenu": {
+          "type": "string",
+          "description": "Daftar komposisi nama menu harian.",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "photoDataUrl": {
+          "type": "string",
+          "description": "Foto hasil krop rasio 3:2 seragam dalam format JPEG Data URL.",
+          "maxLength": 350000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp pembuatan entri."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp pembaruan entri."
+        }
+      },
+      "required": [
+        "uid",
+        "monthKey",
+        "dateIso",
+        "hariKe",
+        "namaMenu",
+        "photoDataUrl",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/SppgUserProfile"
+      },
+      "description": "Profil identitas SPPG yang terisolasi khusus untuk masing-masing email aktif."
+    },
+    "/users/{userId}/months/{monthId}": {
+      "schema": {
+        "$ref": "#/entities/MonthlyArchive"
+      },
+      "description": "Arsip bulanan milik pengguna yang merangkum jumlah entri dan foto setiap bulan."
+    },
+    "/users/{userId}/months/{monthId}/entries/{entryId}": {
+      "schema": {
+        "$ref": "#/entities/DailyMenuEntry"
+      },
+      "description": "Catatan harian menu beserta foto serentak pada bulan terkait."
+    }
+  }
+}
