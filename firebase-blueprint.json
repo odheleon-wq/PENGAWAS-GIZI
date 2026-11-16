@@ -88,7 +88,7 @@
     },
     "MonthlyArchive": {
       "title": "MonthlyArchive",
-      "description": "Ringkasan arsip rekapan menu per satu bulan untuk satu akun SPPG.",
+      "description": "Ringkasan arsip rekapan menu dan pengaturan nilai gizi per satu bulan untuk satu akun SPPG.",
       "type": "object",
       "properties": {
         "uid": {
@@ -126,6 +126,14 @@
           "type": "integer",
           "description": "Jumlah entri yang sudah memiliki foto menu serentak."
         },
+        "selectedCategories": {
+          "type": "array",
+          "description": "Daftar ID kelompok sasaran yang dipilih/digabungkan pada rekapan gizi bulan ini."
+        },
+        "akgTargets": {
+          "type": "object",
+          "description": "Rujukan AKG 20-25% dan target penerima manfaat kustom untuk rekapan gizi."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -151,7 +159,7 @@
     },
     "DailyMenuEntry": {
       "title": "DailyMenuEntry",
-      "description": "Entri menu harian dan foto ompreng yang telah dikrop serentak dalam suatu bulan.",
+      "description": "Entri menu harian, foto ompreng serentak, serta data nilai gizi per kelompok sasaran.",
       "type": "object",
       "properties": {
         "uid": {
@@ -189,6 +197,10 @@
           "description": "Foto hasil krop rasio 3:2 seragam dalam format JPEG Data URL.",
           "maxLength": 350000
         },
+        "nutritionByCategory": {
+          "type": "object",
+          "description": "Peta nilai gizi harian per ID kelompok sasaran."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -210,6 +222,683 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "SampleFormConfig": {
+      "title": "SampleFormConfig",
+      "description": "Konfigurasi format kop dokumen, label kolom, dan tanda tangan verifikasi Form Sampel Pertinggal yang dapat diedit penuh.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "monthKey": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}$",
+          "minLength": 7,
+          "maxLength": 7
+        },
+        "logoDataUrl": {
+          "type": "string",
+          "maxLength": 200000
+        },
+        "logoCaption": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "unitName": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "formLabel": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "formTitle": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "docNumber": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "revision": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "effectiveDate": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "bulanLabel": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "tahunLabel": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "colLabels": {
+          "type": "object",
+          "description": "Label kustom header kolom tabel sampel pertinggal."
+        },
+        "verifierLine1": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "verifierLine2": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "verifierName": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "monthKey",
+        "logoCaption",
+        "unitName",
+        "formLabel",
+        "formTitle",
+        "docNumber",
+        "revision",
+        "effectiveDate",
+        "bulanLabel",
+        "tahunLabel",
+        "verifierLine1",
+        "verifierLine2",
+        "verifierName",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SamplePertinggalRow": {
+      "title": "SamplePertinggalRow",
+      "description": "Satu baris data Form Sampel Pertinggal pada suatu bulan.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "monthKey": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}$",
+          "minLength": 7,
+          "maxLength": 7
+        },
+        "rowOrder": {
+          "type": "integer"
+        },
+        "kodeIdentitas": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "jumlahSampel": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "kondisiOk": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "kondisiNok": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "penanggungJawab": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "masukTanggal": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "masukJam": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "keluarTanggal": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "keluarJam": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "monthKey",
+        "rowOrder",
+        "kodeIdentitas",
+        "jumlahSampel",
+        "kondisiOk",
+        "kondisiNok",
+        "penanggungJawab",
+        "masukTanggal",
+        "masukJam",
+        "keluarTanggal",
+        "keluarJam",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TempFormConfig": {
+      "title": "TempFormConfig",
+      "description": "Konfigurasi format kop, label baris/kolom, dan judul standar SOP BGN Pusat untuk Form Monitoring Suhu & Kelembapan Ruangan.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "monthKey": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}$",
+          "minLength": 7,
+          "maxLength": 7
+        },
+        "logoDataUrl": {
+          "type": "string",
+          "maxLength": 200000
+        },
+        "logoCaption": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "unitName": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "formLabel": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "formTitle": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "docNumber": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "revision": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "effectiveDate": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "periodeLabel": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "tableLabels": {
+          "type": "object",
+          "description": "Label baris/kolom tabel monitoring suhu yang dapat diedit."
+        },
+        "sopTitle": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "sopSubtitle": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "monthKey",
+        "logoCaption",
+        "unitName",
+        "formLabel",
+        "formTitle",
+        "docNumber",
+        "revision",
+        "effectiveDate",
+        "periodeLabel",
+        "sopTitle",
+        "sopSubtitle",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TempMonitoringRoom": {
+      "title": "TempMonitoringRoom",
+      "description": "Satu lokasi/ruangan pemantauan suhu & kelembapan beserta standar suhu SOP BGN Pusat yang otomatis memiliki lembar monitoring harian 1-31.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "monthKey": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}$",
+          "minLength": 7,
+          "maxLength": 7
+        },
+        "roomOrder": {
+          "type": "integer"
+        },
+        "roomName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "presetKey": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "standardSuhu": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "standardRh": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "sopNote": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "monthKey",
+        "roomOrder",
+        "roomName",
+        "presetKey",
+        "standardSuhu",
+        "standardRh",
+        "sopNote",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TempDayReading": {
+      "title": "TempDayReading",
+      "description": "Catatan pembacaan suhu, kelembapan (RH), jam, paraf, nama petugas, dan foto termometer untuk tanggal 1-31 pada suatu ruangan.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "monthKey": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}$",
+          "minLength": 7,
+          "maxLength": 7
+        },
+        "roomId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "day": {
+          "type": "integer"
+        },
+        "jam": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "suhu": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "rh": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "paraf": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "namaPetugas": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "photoDataUrl": {
+          "type": "string",
+          "maxLength": 180000
+        },
+        "detectedNote": {
+          "type": "string",
+          "maxLength": 250
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "monthKey",
+        "roomId",
+        "day",
+        "jam",
+        "suhu",
+        "rh",
+        "paraf",
+        "namaPetugas",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "FreezerFormConfig": {
+      "title": "FreezerFormConfig",
+      "description": "Konfigurasi kop dokumen, label kolom, dan judul lampiran standar BGN untuk Form Pencatatan Suhu Freezer & Chiller.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "monthKey": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}$",
+          "minLength": 7,
+          "maxLength": 7
+        },
+        "logoDataUrl": {
+          "type": "string",
+          "maxLength": 200000
+        },
+        "logoCaption": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "unitName": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "formLabel": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "formTitle": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "docNumber": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "revision": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "effectiveDate": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "periodeLabel": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "colLabels": {
+          "type": "object",
+          "description": "Label kustom metadata dan header kolom tabel Freezer & Chiller."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "monthKey",
+        "logoCaption",
+        "unitName",
+        "formLabel",
+        "formTitle",
+        "docNumber",
+        "revision",
+        "effectiveDate",
+        "periodeLabel",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "FreezerMachine": {
+      "title": "FreezerMachine",
+      "description": "Satu unit mesin Freezer atau Chiller beserta lembar kerja lampiran masing-masing dan standar suhu normal BGN.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "monthKey": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}$",
+          "minLength": 7,
+          "maxLength": 7
+        },
+        "machineOrder": {
+          "type": "integer"
+        },
+        "machineType": {
+          "type": "string",
+          "enum": ["freezer", "chiller"]
+        },
+        "namaMesin": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "merk": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "noMesin": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "lokasi": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "normalSuhuBgn": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "bgnSopNote": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "conclusionHeader": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "repairPrompt": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "repairNote": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "monthKey",
+        "machineOrder",
+        "machineType",
+        "namaMesin",
+        "merk",
+        "noMesin",
+        "lokasi",
+        "normalSuhuBgn",
+        "bgnSopNote",
+        "conclusionHeader",
+        "repairPrompt",
+        "repairNote",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "FreezerLogRow": {
+      "title": "FreezerLogRow",
+      "description": "Satu baris catatan pencatatan suhu harian (Cek I, II, III) pada lembar kerja Freezer atau Chiller tertentu.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "monthKey": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}$",
+          "minLength": 7,
+          "maxLength": 7
+        },
+        "machineId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "rowOrder": {
+          "type": "integer"
+        },
+        "noLabel": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "tanggal": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "jamCek1": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "suhu1": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "pic1": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "jamCek2": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "suhu2": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "pic2": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "jamCek3": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "suhu3": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "pic3": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "keterangan": {
+          "type": "string",
+          "maxLength": 250
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "monthKey",
+        "machineId",
+        "rowOrder",
+        "noLabel",
+        "tanggal",
+        "jamCek1",
+        "suhu1",
+        "pic1",
+        "jamCek2",
+        "suhu2",
+        "pic2",
+        "jamCek3",
+        "suhu3",
+        "pic3",
+        "keterangan",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -223,13 +912,61 @@
       "schema": {
         "$ref": "#/entities/MonthlyArchive"
       },
-      "description": "Arsip bulanan milik pengguna yang merangkum jumlah entri dan foto setiap bulan."
+      "description": "Arsip bulanan milik pengguna yang merangkum entri, foto, dan konfigurasi gizi setiap bulan."
     },
     "/users/{userId}/months/{monthId}/entries/{entryId}": {
       "schema": {
         "$ref": "#/entities/DailyMenuEntry"
       },
-      "description": "Catatan harian menu beserta foto serentak pada bulan terkait."
+      "description": "Catatan harian menu beserta foto serentak dan data nilai gizi per kategori."
+    },
+    "/users/{userId}/months/{monthId}/forms/{formId}": {
+      "schema": {
+        "$ref": "#/entities/SampleFormConfig"
+      },
+      "description": "Konfigurasi header, nomor dokumen, label kolom, dan verifikator Form Sampel Pertinggal."
+    },
+    "/users/{userId}/months/{monthId}/sampleRows/{rowId}": {
+      "schema": {
+        "$ref": "#/entities/SamplePertinggalRow"
+      },
+      "description": "Baris catatan Form Sampel Pertinggal pada bulan terkait."
+    },
+    "/users/{userId}/months/{monthId}/tempForms/{formId}": {
+      "schema": {
+        "$ref": "#/entities/TempFormConfig"
+      },
+      "description": "Konfigurasi header, nomor dokumen, label tabel, dan judul SOP BGN Pusat Form Monitoring Suhu & Kelembapan."
+    },
+    "/users/{userId}/months/{monthId}/tempRooms/{roomId}": {
+      "schema": {
+        "$ref": "#/entities/TempMonitoringRoom"
+      },
+      "description": "Daftar ruangan/lokasi pemantauan suhu & kelembapan beserta standar suhu SOP BGN Pusat."
+    },
+    "/users/{userId}/months/{monthId}/tempRooms/{roomId}/days/{dayId}": {
+      "schema": {
+        "$ref": "#/entities/TempDayReading"
+      },
+      "description": "Catatan harian suhu, kelembapan (RH), jam, paraf, nama petugas, dan foto bukti termometer per tanggal 1-31."
+    },
+    "/users/{userId}/months/{monthId}/freezerForms/{formId}": {
+      "schema": {
+        "$ref": "#/entities/FreezerFormConfig"
+      },
+      "description": "Konfigurasi kop dokumen dan label tabel Form Pencatatan Suhu Freezer & Chiller (FR/JM/06)."
+    },
+    "/users/{userId}/months/{monthId}/freezerMachines/{machineId}": {
+      "schema": {
+        "$ref": "#/entities/FreezerMachine"
+      },
+      "description": "Unit mesin Freezer/Chiller beserta lembar kerja lampiran masing-masing dan standar suhu normal BGN."
+    },
+    "/users/{userId}/months/{monthId}/freezerMachines/{machineId}/rows/{rowId}": {
+      "schema": {
+        "$ref": "#/entities/FreezerLogRow"
+      },
+      "description": "Baris catatan pengecekan suhu harian (Cek I, II, III) pada lembar kerja Freezer atau Chiller."
     }
   }
 }

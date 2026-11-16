@@ -1,38 +1,88 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import {
+  Activity,
   Archive,
   Building2,
   Calendar,
   CalendarPlus,
   ChevronLeft,
   ChevronRight,
+  ClipboardCheck,
   Download,
   FileSpreadsheet,
   ListOrdered,
   LogOut,
   Menu,
+  Snowflake,
+  Thermometer,
   UserCheck,
   X,
 } from 'lucide-react';
 import { auth, googleProvider } from './firebase';
 import {
+  createFreezerMachine,
+  createTempRoom,
   deleteDailyMenuEntry,
+  deleteFreezerLogRow,
+  deleteFreezerMachine,
+  deleteSampleRow,
+  deleteTempRoom,
+  fetchFreezerLogRowsOnce,
+  fetchRoomDayReadingsOnce,
+  getDefaultFreezerFormConfig,
   getDefaultProfileDraft,
+  getDefaultSampleFormConfig,
+  getDefaultTempFormConfig,
   renumberMonthEntriesChronologically,
+  saveFreezerFormConfig,
+  saveMonthNutritionConfig,
+  saveSampleFormConfig,
+  saveTempFormConfig,
   saveUserProfile,
+  seedAllPresetTempRooms,
+  subscribeFreezerFormConfig,
+  subscribeFreezerLogRows,
+  subscribeFreezerMachines,
   subscribeMonthEntries,
   subscribeMonthlyArchives,
+  subscribeRoomDayReadings,
+  subscribeSampleFormConfig,
+  subscribeSampleRows,
+  subscribeTempFormConfig,
+  subscribeTempRooms,
   subscribeUserProfile,
+  updateEntryNutritionMap,
+  updateFreezerMachine,
+  updateTempRoom,
   upsertDailyMenuEntry,
+  upsertFreezerLogRow,
+  upsertSampleRow,
+  upsertTempDayReading,
 } from './services/sppgService';
 import type {
+  AkgTargetsConfig,
   DailyMenuEntry,
+  FreezerFormConfig,
+  FreezerLogRow,
+  FreezerMachine,
+  FreezerMachineType,
   MonthlyArchive,
+  NutritionValues,
   PdfOrientation,
+  SampleFormConfig,
+  SamplePertinggalRow,
   SppgUserProfile,
+  TargetCategoryId,
+  TempDayReading,
+  TempFormConfig,
+  TempMonitoringRoom,
   WorkspaceTab,
 } from './types';
+import {
+  computeMonthlyNutritionSummary,
+  getCombinedCategoryTitle,
+} from './constants/nutritionCategories';
 import {
   getMonthKey,
   getNextSuggestedDateInMonth,
@@ -40,13 +90,24 @@ import {
   getTodayIso,
   shiftMonthKey,
 } from './utils/dateUtils';
-import { exportRekapanToF4Pdf } from './utils/pdfExporter';
+import {
+  exportFreezerChillerToF4Pdf,
+  exportNutritionToF4Pdf,
+  exportRekapanToF4Pdf,
+  exportSamplePertinggalToF4Pdf,
+  exportTemperatureMonitoringToF4Pdf,
+} from './utils/pdfExporter';
 import { LoginScreen } from './components/LoginScreen';
 import { SppgProfileForm } from './components/SppgProfileForm';
 import { RekapanTablePreview } from './components/RekapanTablePreview';
 import { EntryEditorModal } from './components/EntryEditorModal';
 import { MonthCalendarView } from './components/MonthCalendarView';
 import { MonthlyArchiveList } from './components/MonthlyArchiveList';
+import { RekapanGiziView } from './components/RekapanGiziView';
+import { NutritionEntryModal } from './components/NutritionEntryModal';
+import { SamplePertinggalView } from './components/SamplePertinggalView';
+import { TemperatureMonitoringView } from './components/TemperatureMonitoringView';
+import { FreezerChillerView } from './components/FreezerChillerView';
 
 export default function App() {
   const [authReady, setAuthReady] = useState(false);
@@ -73,6 +134,27 @@ export default function App() {
     dateIso: string;
     entry: DailyMenuEntry | null;
   }>({ open: false, dateIso: getTodayIso(), entry: null });
+
+  const [nutritionModalEntry, setNutritionModalEntry] = useState<DailyMenuEntry | null>(null);
+  const [localSelectedCategories, setLocalSelectedCategories] = useState<TargetCategoryId[]>([
+    'smp_mts',
+  ]);
+
+  const [sampleConfig, setSampleConfig] = useState<SampleFormConfig | null>(null);
+  const [sampleRows, setSampleRows] = useState<SamplePertinggalRow[]>([]);
+  const [minSamplePrintableRows, setMinSamplePrintableRows] = useState<number>(10);
+
+  const [tempConfig, setTempConfig] = useState<TempFormConfig | null>(null);
+  const [tempRooms, setTempRooms] = useState<TempMonitoringRoom[]>([]);
+  const [tempRoomsLoaded, setTempRoomsLoaded] = useState(false);
+  const [activeTempRoomId, setActiveTempRoomId] = useState<string | null>(null);
+  const [tempDayReadings, setTempDayReadings] = useState<TempDayReading[]>([]);
+
+  const [freezerConfig, setFreezerConfig] = useState<FreezerFormConfig | null>(null);
+  const [freezerMachines, setFreezerMachines] = useState<FreezerMachine[]>([]);
+  const [freezerMachinesLoaded, setFreezerMachinesLoaded] = useState(false);
+  const [activeFreezerMachineId, setActiveFreezerMachineId] = useState<string | null>(null);
+  const [freezerLogRows, setFreezerLogRows] = useState<FreezerLogRow[]>([]);
 
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
@@ -121,10 +203,15 @@ export default function App() {
     };
   }, [user]);
 
-  // 3. Active Month Entries Subscription
+  // 3. Active Month Entries, Sample Pertinggal, Temperature Monitoring & Freezer/Chiller Subscriptions
   useEffect(() => {
     if (!user) return;
     setEntriesLoading(true);
+    setTempRoomsLoaded(false);
+    setActiveTempRoomId(null);
+    setFreezerMachinesLoaded(false);
+    setActiveFreezerMachineId(null);
+
     const unsubEntries = subscribeMonthEntries(
       user.uid,
       activeMonthKey,
@@ -137,8 +224,117 @@ export default function App() {
         setEntriesLoading(false);
       }
     );
-    return () => unsubEntries();
+
+    const unsubSampleConfig = subscribeSampleFormConfig(
+      user.uid,
+      activeMonthKey,
+      (cfg) => setSampleConfig(cfg),
+      (err) => setErrorBanner(err.message)
+    );
+
+    const unsubSampleRows = subscribeSampleRows(
+      user.uid,
+      activeMonthKey,
+      (list) => setSampleRows(list),
+      (err) => setErrorBanner(err.message)
+    );
+
+    const unsubTempConfig = subscribeTempFormConfig(
+      user.uid,
+      activeMonthKey,
+      (cfg) => setTempConfig(cfg),
+      (err) => setErrorBanner(err.message)
+    );
+
+    const unsubTempRooms = subscribeTempRooms(
+      user.uid,
+      activeMonthKey,
+      (list) => {
+        setTempRooms(list);
+        setTempRoomsLoaded(true);
+      },
+      (err) => {
+        setErrorBanner(err.message);
+        setTempRoomsLoaded(true);
+      }
+    );
+
+    const unsubFreezerConfig = subscribeFreezerFormConfig(
+      user.uid,
+      activeMonthKey,
+      (cfg) => setFreezerConfig(cfg),
+      (err) => setErrorBanner(err.message)
+    );
+
+    const unsubFreezerMachines = subscribeFreezerMachines(
+      user.uid,
+      activeMonthKey,
+      (list) => {
+        setFreezerMachines(list);
+        setFreezerMachinesLoaded(true);
+      },
+      (err) => {
+        setErrorBanner(err.message);
+        setFreezerMachinesLoaded(true);
+      }
+    );
+
+    return () => {
+      unsubEntries();
+      unsubSampleConfig();
+      unsubSampleRows();
+      unsubTempConfig();
+      unsubTempRooms();
+      unsubFreezerConfig();
+      unsubFreezerMachines();
+    };
   }, [user, activeMonthKey]);
+
+  const effectiveTempRoomId = useMemo(() => {
+    if (activeTempRoomId && tempRooms.some((r) => r.id === activeTempRoomId)) {
+      return activeTempRoomId;
+    }
+    return tempRooms[0]?.id || null;
+  }, [activeTempRoomId, tempRooms]);
+
+  // 4. Active Room Daily Temperature Readings Subscription
+  useEffect(() => {
+    if (!user || !effectiveTempRoomId) {
+      setTempDayReadings([]);
+      return;
+    }
+    const unsubDays = subscribeRoomDayReadings(
+      user.uid,
+      activeMonthKey,
+      effectiveTempRoomId,
+      (list) => setTempDayReadings(list),
+      (err) => setErrorBanner(err.message)
+    );
+    return () => unsubDays();
+  }, [user, activeMonthKey, effectiveTempRoomId]);
+
+  const effectiveFreezerMachineId = useMemo(() => {
+    if (activeFreezerMachineId && freezerMachines.some((m) => m.id === activeFreezerMachineId)) {
+      return activeFreezerMachineId;
+    }
+    return freezerMachines[0]?.id || null;
+  }, [activeFreezerMachineId, freezerMachines]);
+
+  // 5. Active Freezer/Chiller Machine Log Rows Subscription
+  useEffect(() => {
+    if (!user || !effectiveFreezerMachineId) {
+      setFreezerLogRows([]);
+      return;
+    }
+    const unsubRows = subscribeFreezerLogRows(
+      user.uid,
+      activeMonthKey,
+      effectiveFreezerMachineId,
+      (list) => setFreezerLogRows(list),
+      (err) => setErrorBanner(err.message)
+    );
+    return () => unsubRows();
+  }, [user, activeMonthKey, effectiveFreezerMachineId]);
 
   const suggestedHariKe = useMemo(() => {
     if (entries.length === 0) return 1;
@@ -152,6 +348,45 @@ export default function App() {
       entries.map((e) => e.dateIso)
     );
   }, [activeMonthKey, entries]);
+
+  const activeArchive = useMemo(
+    () => archives.find((a) => a.monthKey === activeMonthKey) || null,
+    [archives, activeMonthKey]
+  );
+
+  const selectedCategories: TargetCategoryId[] = useMemo(() => {
+    if (activeArchive?.selectedCategories && activeArchive.selectedCategories.length > 0) {
+      return activeArchive.selectedCategories;
+    }
+    return localSelectedCategories;
+  }, [activeArchive, localSelectedCategories]);
+
+  const handleChangeSelectedCategories = (next: TargetCategoryId[]) => {
+    setLocalSelectedCategories(next);
+    if (user) {
+      void saveMonthNutritionConfig(user.uid, activeMonthKey, next, activeArchive?.akgTargets);
+    }
+  };
+
+  const handleSaveAkgTargets = async (nextAkg: AkgTargetsConfig) => {
+    if (!user) return;
+    await saveMonthNutritionConfig(user.uid, activeMonthKey, selectedCategories, nextAkg);
+  };
+
+  const handleSaveEntryNutrition = async (
+    entryId: string,
+    nutritionByCategory: Partial<Record<TargetCategoryId, NutritionValues>>,
+    updatedNamaMenu?: string
+  ) => {
+    if (!user) return;
+    await updateEntryNutritionMap(
+      user.uid,
+      activeMonthKey,
+      entryId,
+      nutritionByCategory,
+      updatedNamaMenu
+    );
+  };
 
   const handleLoginWithGoogle = async () => {
     await signInWithPopup(auth, googleProvider);
@@ -189,8 +424,256 @@ export default function App() {
     await renumberMonthEntriesChronologically(user.uid, activeMonthKey, entries);
   };
 
+  const effectiveSampleConfig = useMemo(() => {
+    if (!user || !profile) return null;
+    return sampleConfig || getDefaultSampleFormConfig(user.uid, activeMonthKey, profile);
+  }, [user, profile, sampleConfig, activeMonthKey]);
+
+  const handleSaveSampleConfig = async (
+    next: Omit<SampleFormConfig, 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
+  ) => {
+    if (!user) return;
+    await saveSampleFormConfig(user.uid, activeMonthKey, next);
+  };
+
+  const handleSaveSampleRow = async (
+    row: Omit<SamplePertinggalRow, 'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'> & {
+      id?: string;
+    }
+  ) => {
+    if (!user) return;
+    await upsertSampleRow(user.uid, activeMonthKey, row);
+  };
+
+  const handleDeleteSampleRow = async (rowId: string) => {
+    if (!user) return;
+    await deleteSampleRow(user.uid, activeMonthKey, rowId);
+  };
+
+  const effectiveTempConfig = useMemo(() => {
+    if (!user || !profile) return null;
+    return tempConfig || getDefaultTempFormConfig(user.uid, activeMonthKey, profile);
+  }, [user, profile, tempConfig, activeMonthKey]);
+
+  const handleSaveTempConfig = async (
+    next: Omit<TempFormConfig, 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
+  ) => {
+    if (!user) return;
+    await saveTempFormConfig(user.uid, activeMonthKey, next);
+  };
+
+  const handleCreateTempRoom = async (roomName: string) => {
+    if (!user) return;
+    const maxOrder = tempRooms.reduce((m, r) => Math.max(m, r.roomOrder), 0);
+    const createdId = await createTempRoom(user.uid, activeMonthKey, {
+      roomName,
+      roomOrder: maxOrder + 1,
+    });
+    if (createdId) {
+      setActiveTempRoomId(createdId);
+    }
+    return createdId;
+  };
+
+  const handleSeedAllPresetRooms = async () => {
+    if (!user) return;
+    await seedAllPresetTempRooms(user.uid, activeMonthKey, tempRooms);
+  };
+
+  const handleUpdateTempRoom = async (
+    roomId: string,
+    input: {
+      roomOrder: number;
+      roomName: string;
+      presetKey: string;
+      standardSuhu: string;
+      standardRh: string;
+      sopNote: string;
+    }
+  ) => {
+    if (!user) return;
+    await updateTempRoom(user.uid, activeMonthKey, roomId, input);
+  };
+
+  const handleDeleteTempRoom = async (roomId: string) => {
+    if (!user) return;
+    await deleteTempRoom(user.uid, activeMonthKey, roomId);
+    if (activeTempRoomId === roomId) {
+      setActiveTempRoomId(null);
+    }
+  };
+
+  const handleSaveTempDayReading = async (
+    roomId: string,
+    input: {
+      day: number;
+      jam: string;
+      suhu: string;
+      rh: string;
+      paraf: string;
+      namaPetugas: string;
+      photoDataUrl?: string;
+      detectedNote?: string;
+    }
+  ) => {
+    if (!user) return;
+    await upsertTempDayReading(user.uid, activeMonthKey, roomId, input);
+  };
+
+  const handleExportAllTempRoomsPdf = async () => {
+    if (!user || !effectiveTempConfig || tempRooms.length === 0) return;
+    const sheets = await Promise.all(
+      tempRooms.map(async (room) => ({
+        room,
+        readings:
+          room.id === effectiveTempRoomId
+            ? tempDayReadings
+            : await fetchRoomDayReadingsOnce(user.uid, activeMonthKey, room.id),
+      }))
+    );
+    exportTemperatureMonitoringToF4Pdf({
+      config: effectiveTempConfig,
+      sheets,
+      allRoomsForSop: tempRooms,
+      orientation: pdfOrientation,
+    });
+  };
+
+  const effectiveFreezerConfig = useMemo(() => {
+    if (!user || !profile) return null;
+    return freezerConfig || getDefaultFreezerFormConfig(user.uid, activeMonthKey, profile);
+  }, [user, profile, freezerConfig, activeMonthKey]);
+
+  const handleSaveFreezerConfig = async (
+    next: Omit<FreezerFormConfig, 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
+  ) => {
+    if (!user) return;
+    await saveFreezerFormConfig(user.uid, activeMonthKey, next);
+  };
+
+  const handleCreateFreezerMachine = async (input: {
+    machineType: FreezerMachineType;
+    namaMesin: string;
+    merk: string;
+    noMesin: string;
+    lokasi: string;
+  }) => {
+    if (!user) return;
+    const maxOrder = freezerMachines.reduce((m, x) => Math.max(m, x.machineOrder), 0);
+    const createdId = await createFreezerMachine(user.uid, activeMonthKey, {
+      machineOrder: maxOrder + 1,
+      ...input,
+    });
+    if (createdId) {
+      setActiveFreezerMachineId(createdId);
+    }
+    return createdId;
+  };
+
+  const handleUpdateFreezerMachine = async (
+    machineId: string,
+    input: Omit<FreezerMachine, 'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
+  ) => {
+    if (!user) return;
+    await updateFreezerMachine(user.uid, activeMonthKey, machineId, input);
+  };
+
+  const handleDeleteFreezerMachine = async (machineId: string) => {
+    if (!user) return;
+    await deleteFreezerMachine(user.uid, activeMonthKey, machineId);
+    if (activeFreezerMachineId === machineId) {
+      setActiveFreezerMachineId(null);
+    }
+  };
+
+  const handleSaveFreezerRow = async (
+    machineId: string,
+    row: Omit<
+      FreezerLogRow,
+      'id' | 'uid' | 'monthKey' | 'machineId' | 'createdAt' | 'updatedAt'
+    > & { id?: string }
+  ) => {
+    if (!user) return;
+    await upsertFreezerLogRow(user.uid, activeMonthKey, machineId, row);
+  };
+
+  const handleDeleteFreezerRow = async (machineId: string, rowId: string) => {
+    if (!user) return;
+    await deleteFreezerLogRow(user.uid, activeMonthKey, machineId, rowId);
+  };
+
+  const handleExportAllFreezerMachinesPdf = async () => {
+    if (!user || !effectiveFreezerConfig || freezerMachines.length === 0) return;
+    const sheets = await Promise.all(
+      freezerMachines.map(async (machine) => ({
+        machine,
+        rows:
+          machine.id === effectiveFreezerMachineId
+            ? freezerLogRows
+            : await fetchFreezerLogRowsOnce(user.uid, activeMonthKey, machine.id),
+      }))
+    );
+    exportFreezerChillerToF4Pdf({
+      config: effectiveFreezerConfig,
+      sheets,
+      orientation: pdfOrientation,
+    });
+  };
+
   const handleDownloadPdf = () => {
     if (!profile) return;
+    if (activeTab === 'freezer' && effectiveFreezerConfig && effectiveFreezerMachineId) {
+      const activeMachine = freezerMachines.find((m) => m.id === effectiveFreezerMachineId);
+      if (activeMachine) {
+        exportFreezerChillerToF4Pdf({
+          config: effectiveFreezerConfig,
+          sheets: [{ machine: activeMachine, rows: freezerLogRows }],
+          orientation: pdfOrientation,
+        });
+      }
+      return;
+    }
+    if (activeTab === 'suhu' && effectiveTempConfig && effectiveTempRoomId) {
+      const activeRoom = tempRooms.find((r) => r.id === effectiveTempRoomId);
+      if (activeRoom) {
+        exportTemperatureMonitoringToF4Pdf({
+          config: effectiveTempConfig,
+          sheets: [{ room: activeRoom, readings: tempDayReadings }],
+          allRoomsForSop: tempRooms,
+          orientation: pdfOrientation,
+        });
+      }
+      return;
+    }
+    if (activeTab === 'sampel' && effectiveSampleConfig) {
+      exportSamplePertinggalToF4Pdf({
+        config: effectiveSampleConfig,
+        rows: sampleRows,
+        orientation: pdfOrientation,
+        minPrintableRows: minSamplePrintableRows,
+      });
+      return;
+    }
+    if (activeTab === 'gizi') {
+      const summary = computeMonthlyNutritionSummary(
+        entries,
+        selectedCategories,
+        activeArchive?.akgTargets
+      );
+      const categoryLabel = getCombinedCategoryTitle(
+        selectedCategories,
+        activeArchive?.akgTargets?.customTitle
+      );
+      exportNutritionToF4Pdf({
+        profile,
+        monthKey: activeMonthKey,
+        categoryLabel,
+        summary,
+        orientation: pdfOrientation,
+        includeYearInPeriod,
+      });
+      return;
+    }
     exportRekapanToF4Pdf({
       profile,
       monthKey: activeMonthKey,
@@ -259,6 +742,10 @@ export default function App() {
 
   const navItems: Array<{ id: WorkspaceTab; label: string; icon: React.ReactNode }> = [
     { id: 'rekapan', label: 'Tabel Rekapan & PDF', icon: <FileSpreadsheet className="h-4 w-4" /> },
+    { id: 'gizi', label: 'Rekapan Nilai Gizi', icon: <Activity className="h-4 w-4" /> },
+    { id: 'sampel', label: 'Form Sampel Pertinggal', icon: <ClipboardCheck className="h-4 w-4" /> },
+    { id: 'suhu', label: 'Monitoring Suhu Ruangan', icon: <Thermometer className="h-4 w-4" /> },
+    { id: 'freezer', label: 'Suhu Freezer & Chiller', icon: <Snowflake className="h-4 w-4" /> },
     { id: 'kalender', label: 'Kalender & Hari Terlewat', icon: <Calendar className="h-4 w-4" /> },
     { id: 'arsip', label: 'Arsip Bulanan', icon: <Archive className="h-4 w-4" /> },
     { id: 'identitas', label: 'Identitas SPPG', icon: <Building2 className="h-4 w-4" /> },
@@ -372,7 +859,12 @@ export default function App() {
             </button>
             <button
               type="button"
-              disabled={entries.length === 0}
+              disabled={
+                activeTab !== 'sampel' &&
+                activeTab !== 'suhu' &&
+                activeTab !== 'freezer' &&
+                entries.length === 0
+              }
               onClick={handleDownloadPdf}
               className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 whitespace-nowrap"
             >
@@ -424,8 +916,13 @@ export default function App() {
             </div>
           )}
 
-          {/* Month & F4 Settings Strip (visible on rekapan & kalender) */}
-          {(activeTab === 'rekapan' || activeTab === 'kalender') && (
+          {/* Month & F4 Settings Strip (visible on rekapan, gizi, sampel, suhu, freezer & kalender) */}
+          {(activeTab === 'rekapan' ||
+            activeTab === 'gizi' ||
+            activeTab === 'sampel' ||
+            activeTab === 'suhu' ||
+            activeTab === 'freezer' ||
+            activeTab === 'kalender') && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
               {/* Month Picker */}
               <div className="flex items-center gap-2">
@@ -539,6 +1036,88 @@ export default function App() {
             )
           )}
 
+          {activeTab === 'gizi' && (
+            entriesLoading ? (
+              <div className="rounded-xl border border-slate-200 bg-white p-12 text-center text-xs text-slate-500">
+                Memuat rekapan nilai gizi bulan {getPeriodeDisplayName(activeMonthKey)}...
+              </div>
+            ) : (
+              <RekapanGiziView
+                profile={profile}
+                monthKey={activeMonthKey}
+                entries={entries}
+                includeYearInPeriod={includeYearInPeriod}
+                selectedCategories={selectedCategories}
+                akgTargets={activeArchive?.akgTargets}
+                onChangeCategories={handleChangeSelectedCategories}
+                onSaveAkgTargets={handleSaveAkgTargets}
+                onEditEntryNutrition={(entry) => setNutritionModalEntry(entry)}
+                onAddNewMenu={() =>
+                  setEditorModal({
+                    open: true,
+                    dateIso: nextDateForActiveMonth,
+                    entry: null,
+                  })
+                }
+              />
+            )
+          )}
+
+          {activeTab === 'sampel' && effectiveSampleConfig && (
+            <SamplePertinggalView
+              profile={profile}
+              monthKey={activeMonthKey}
+              config={effectiveSampleConfig}
+              rows={sampleRows}
+              menuEntries={entries}
+              minPrintableRows={minSamplePrintableRows}
+              onChangeMinPrintableRows={setMinSamplePrintableRows}
+              onSaveConfig={handleSaveSampleConfig}
+              onSaveRow={handleSaveSampleRow}
+              onDeleteRow={handleDeleteSampleRow}
+            />
+          )}
+
+          {activeTab === 'suhu' && effectiveTempConfig && (
+            <TemperatureMonitoringView
+              profile={profile}
+              monthKey={activeMonthKey}
+              config={effectiveTempConfig}
+              rooms={tempRooms}
+              roomsLoaded={tempRoomsLoaded}
+              activeRoomId={effectiveTempRoomId}
+              dayReadings={tempDayReadings}
+              onSelectRoom={setActiveTempRoomId}
+              onCreateRoom={handleCreateTempRoom}
+              onSeedAllPresetRooms={handleSeedAllPresetRooms}
+              onUpdateRoom={handleUpdateTempRoom}
+              onDeleteRoom={handleDeleteTempRoom}
+              onSaveConfig={handleSaveTempConfig}
+              onSaveDayReading={handleSaveTempDayReading}
+              onExportAllRoomsPdf={handleExportAllTempRoomsPdf}
+            />
+          )}
+
+          {activeTab === 'freezer' && effectiveFreezerConfig && (
+            <FreezerChillerView
+              profile={profile}
+              monthKey={activeMonthKey}
+              config={effectiveFreezerConfig}
+              machines={freezerMachines}
+              machinesLoaded={freezerMachinesLoaded}
+              activeMachineId={effectiveFreezerMachineId}
+              rows={freezerLogRows}
+              onSelectMachine={setActiveFreezerMachineId}
+              onCreateMachine={handleCreateFreezerMachine}
+              onUpdateMachine={handleUpdateFreezerMachine}
+              onDeleteMachine={handleDeleteFreezerMachine}
+              onSaveConfig={handleSaveFreezerConfig}
+              onSaveRow={handleSaveFreezerRow}
+              onDeleteRow={handleDeleteFreezerRow}
+              onExportAllMachinesPdf={handleExportAllFreezerMachinesPdf}
+            />
+          )}
+
           {activeTab === 'kalender' && (
             <MonthCalendarView
               monthKey={activeMonthKey}
@@ -591,6 +1170,16 @@ export default function App() {
           onClose={() => setEditorModal((prev) => ({ ...prev, open: false }))}
           onSave={handleSaveEntry}
           onDelete={handleDeleteEntry}
+        />
+      )}
+
+      {/* Nutrition Entry Modal */}
+      {nutritionModalEntry && (
+        <NutritionEntryModal
+          entry={nutritionModalEntry}
+          selectedCategories={selectedCategories}
+          onClose={() => setNutritionModalEntry(null)}
+          onSave={handleSaveEntryNutrition}
         />
       )}
     </div>

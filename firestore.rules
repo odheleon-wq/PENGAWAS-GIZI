@@ -62,7 +62,8 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'uid', 'monthKey', 'year', 'month', 'periodeLabel',
-          'entryCount', 'photoCount', 'createdAt', 'updatedAt'
+          'entryCount', 'photoCount', 'selectedCategories', 'akgTargets',
+          'createdAt', 'updatedAt'
         ])
         && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
         && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
@@ -71,6 +72,18 @@ service cloud.firestore {
         && data.periodeLabel is string && data.periodeLabel.size() >= 1 && data.periodeLabel.size() <= 40
         && data.entryCount is int && data.entryCount >= 0 && data.entryCount <= 366
         && data.photoCount is int && data.photoCount >= 0 && data.photoCount <= 366
+        && (
+          !('selectedCategories' in data) || (
+            data.selectedCategories is list
+            && data.selectedCategories.size() <= 15
+            && data.selectedCategories.hasOnly([
+              'tk_paud_lb', 'sd_1_3', 'sd_4_6', 'smp_mts', 'sma_smk',
+              'pendidik', 'tendik', 'anak_balita', 'balita_13_59',
+              'balita_6_11', 'ibu_hamil', 'ibu_menyusui'
+            ])
+          )
+        )
+        && (!('akgTargets' in data) || (data.akgTargets is map && data.akgTargets.size() <= 20))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -82,7 +95,7 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'uid', 'monthKey', 'dateIso', 'hariKe', 'namaMenu',
-          'photoDataUrl', 'createdAt', 'updatedAt'
+          'photoDataUrl', 'nutritionByCategory', 'createdAt', 'updatedAt'
         ])
         && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
         && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
@@ -90,6 +103,230 @@ service cloud.firestore {
         && data.hariKe is int && data.hariKe >= 1 && data.hariKe <= 366
         && data.namaMenu is string && data.namaMenu.size() >= 1 && data.namaMenu.size() <= 1000
         && data.photoDataUrl is string && data.photoDataUrl.size() <= 350000
+        && (!('nutritionByCategory' in data) || (data.nutritionByCategory is map && data.nutritionByCategory.size() <= 20))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSampleFormConfig(data) {
+      return data.keys().hasAll([
+          'uid', 'monthKey', 'logoCaption', 'unitName', 'formLabel', 'formTitle',
+          'docNumber', 'revision', 'effectiveDate', 'bulanLabel', 'tahunLabel',
+          'verifierLine1', 'verifierLine2', 'verifierName', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'monthKey', 'logoDataUrl', 'logoCaption', 'unitName', 'formLabel', 'formTitle',
+          'docNumber', 'revision', 'effectiveDate', 'bulanLabel', 'tahunLabel',
+          'colLabels', 'verifierLine1', 'verifierLine2', 'verifierName', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
+        && (!('logoDataUrl' in data) || (data.logoDataUrl is string && data.logoDataUrl.size() <= 200000))
+        && data.logoCaption is string && data.logoCaption.size() <= 80
+        && data.unitName is string && data.unitName.size() <= 150
+        && data.formLabel is string && data.formLabel.size() <= 60
+        && data.formTitle is string && data.formTitle.size() <= 100
+        && data.docNumber is string && data.docNumber.size() <= 60
+        && data.revision is string && data.revision.size() <= 30
+        && data.effectiveDate is string && data.effectiveDate.size() <= 60
+        && data.bulanLabel is string && data.bulanLabel.size() <= 40
+        && data.tahunLabel is string && data.tahunLabel.size() <= 20
+        && (!('colLabels' in data) || (data.colLabels is map && data.colLabels.size() <= 16))
+        && data.verifierLine1 is string && data.verifierLine1.size() <= 80
+        && data.verifierLine2 is string && data.verifierLine2.size() <= 80
+        && data.verifierName is string && data.verifierName.size() <= 150
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSamplePertinggalRow(data) {
+      return data.keys().hasAll([
+          'uid', 'monthKey', 'rowOrder', 'kodeIdentitas', 'jumlahSampel',
+          'kondisiOk', 'kondisiNok', 'penanggungJawab', 'masukTanggal',
+          'masukJam', 'keluarTanggal', 'keluarJam', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'monthKey', 'rowOrder', 'kodeIdentitas', 'jumlahSampel',
+          'kondisiOk', 'kondisiNok', 'penanggungJawab', 'masukTanggal',
+          'masukJam', 'keluarTanggal', 'keluarJam', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
+        && data.rowOrder is int && data.rowOrder >= 1 && data.rowOrder <= 500
+        && data.kodeIdentitas is string && data.kodeIdentitas.size() <= 150
+        && data.jumlahSampel is string && data.jumlahSampel.size() <= 60
+        && data.kondisiOk is string && data.kondisiOk.size() <= 20
+        && data.kondisiNok is string && data.kondisiNok.size() <= 20
+        && data.penanggungJawab is string && data.penanggungJawab.size() <= 150
+        && data.masukTanggal is string && data.masukTanggal.size() <= 60
+        && data.masukJam is string && data.masukJam.size() <= 30
+        && data.keluarTanggal is string && data.keluarTanggal.size() <= 60
+        && data.keluarJam is string && data.keluarJam.size() <= 30
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTempFormConfig(data) {
+      return data.keys().hasAll([
+          'uid', 'monthKey', 'logoCaption', 'unitName', 'formLabel', 'formTitle',
+          'docNumber', 'revision', 'effectiveDate', 'periodeLabel',
+          'sopTitle', 'sopSubtitle', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'monthKey', 'logoDataUrl', 'logoCaption', 'unitName', 'formLabel', 'formTitle',
+          'docNumber', 'revision', 'effectiveDate', 'periodeLabel', 'tableLabels',
+          'sopTitle', 'sopSubtitle', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
+        && (!('logoDataUrl' in data) || (data.logoDataUrl is string && data.logoDataUrl.size() <= 200000))
+        && data.logoCaption is string && data.logoCaption.size() <= 80
+        && data.unitName is string && data.unitName.size() <= 150
+        && data.formLabel is string && data.formLabel.size() <= 60
+        && data.formTitle is string && data.formTitle.size() <= 120
+        && data.docNumber is string && data.docNumber.size() <= 60
+        && data.revision is string && data.revision.size() <= 30
+        && data.effectiveDate is string && data.effectiveDate.size() <= 60
+        && data.periodeLabel is string && data.periodeLabel.size() <= 60
+        && (!('tableLabels' in data) || (data.tableLabels is map && data.tableLabels.size() <= 16))
+        && data.sopTitle is string && data.sopTitle.size() <= 150
+        && data.sopSubtitle is string && data.sopSubtitle.size() <= 300
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTempMonitoringRoom(data) {
+      return data.keys().hasAll([
+          'uid', 'monthKey', 'roomOrder', 'roomName', 'presetKey',
+          'standardSuhu', 'standardRh', 'sopNote', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'monthKey', 'roomOrder', 'roomName', 'presetKey',
+          'standardSuhu', 'standardRh', 'sopNote', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
+        && data.roomOrder is int && data.roomOrder >= 1 && data.roomOrder <= 200
+        && data.roomName is string && data.roomName.size() >= 1 && data.roomName.size() <= 120
+        && data.presetKey is string && data.presetKey.size() <= 60
+        && data.standardSuhu is string && data.standardSuhu.size() <= 120
+        && data.standardRh is string && data.standardRh.size() <= 80
+        && data.sopNote is string && data.sopNote.size() <= 300
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTempDayReading(data) {
+      return data.keys().hasAll([
+          'uid', 'monthKey', 'roomId', 'day', 'jam', 'suhu', 'rh',
+          'paraf', 'namaPetugas', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'monthKey', 'roomId', 'day', 'jam', 'suhu', 'rh',
+          'paraf', 'namaPetugas', 'photoDataUrl', 'detectedNote',
+          'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
+        && data.roomId is string && data.roomId.size() >= 1 && data.roomId.size() <= 128
+        && data.day is int && data.day >= 1 && data.day <= 31
+        && data.jam is string && data.jam.size() <= 20
+        && data.suhu is string && data.suhu.size() <= 30
+        && data.rh is string && data.rh.size() <= 30
+        && data.paraf is string && data.paraf.size() <= 40
+        && data.namaPetugas is string && data.namaPetugas.size() <= 120
+        && (!('photoDataUrl' in data) || (data.photoDataUrl is string && data.photoDataUrl.size() <= 180000))
+        && (!('detectedNote' in data) || (data.detectedNote is string && data.detectedNote.size() <= 250))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFreezerFormConfig(data) {
+      return data.keys().hasAll([
+          'uid', 'monthKey', 'logoCaption', 'unitName', 'formLabel', 'formTitle',
+          'docNumber', 'revision', 'effectiveDate', 'periodeLabel',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'monthKey', 'logoDataUrl', 'logoCaption', 'unitName', 'formLabel', 'formTitle',
+          'docNumber', 'revision', 'effectiveDate', 'periodeLabel', 'colLabels',
+          'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
+        && (!('logoDataUrl' in data) || (data.logoDataUrl is string && data.logoDataUrl.size() <= 200000))
+        && data.logoCaption is string && data.logoCaption.size() <= 80
+        && data.unitName is string && data.unitName.size() <= 150
+        && data.formLabel is string && data.formLabel.size() <= 60
+        && data.formTitle is string && data.formTitle.size() <= 120
+        && data.docNumber is string && data.docNumber.size() <= 60
+        && data.revision is string && data.revision.size() <= 30
+        && data.effectiveDate is string && data.effectiveDate.size() <= 60
+        && data.periodeLabel is string && data.periodeLabel.size() <= 60
+        && (!('colLabels' in data) || (data.colLabels is map && data.colLabels.size() <= 24))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFreezerMachine(data) {
+      return data.keys().hasAll([
+          'uid', 'monthKey', 'machineOrder', 'machineType', 'namaMesin',
+          'merk', 'noMesin', 'lokasi', 'normalSuhuBgn', 'bgnSopNote',
+          'conclusionHeader', 'repairPrompt', 'repairNote', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'monthKey', 'machineOrder', 'machineType', 'namaMesin',
+          'merk', 'noMesin', 'lokasi', 'normalSuhuBgn', 'bgnSopNote',
+          'conclusionHeader', 'repairPrompt', 'repairNote', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
+        && data.machineOrder is int && data.machineOrder >= 1 && data.machineOrder <= 200
+        && data.machineType in ['freezer', 'chiller']
+        && data.namaMesin is string && data.namaMesin.size() >= 1 && data.namaMesin.size() <= 120
+        && data.merk is string && data.merk.size() <= 100
+        && data.noMesin is string && data.noMesin.size() <= 100
+        && data.lokasi is string && data.lokasi.size() <= 120
+        && data.normalSuhuBgn is string && data.normalSuhuBgn.size() <= 120
+        && data.bgnSopNote is string && data.bgnSopNote.size() <= 300
+        && data.conclusionHeader is string && data.conclusionHeader.size() <= 100
+        && data.repairPrompt is string && data.repairPrompt.size() <= 100
+        && data.repairNote is string && data.repairNote.size() <= 100
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFreezerLogRow(data) {
+      return data.keys().hasAll([
+          'uid', 'monthKey', 'machineId', 'rowOrder', 'noLabel', 'tanggal',
+          'jamCek1', 'suhu1', 'pic1',
+          'jamCek2', 'suhu2', 'pic2',
+          'jamCek3', 'suhu3', 'pic3',
+          'keterangan', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'monthKey', 'machineId', 'rowOrder', 'noLabel', 'tanggal',
+          'jamCek1', 'suhu1', 'pic1',
+          'jamCek2', 'suhu2', 'pic2',
+          'jamCek3', 'suhu3', 'pic3',
+          'keterangan', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
+        && data.machineId is string && data.machineId.size() >= 1 && data.machineId.size() <= 128
+        && data.rowOrder is int && data.rowOrder >= 1 && data.rowOrder <= 500
+        && data.noLabel is string && data.noLabel.size() <= 20
+        && data.tanggal is string && data.tanggal.size() <= 60
+        && data.jamCek1 is string && data.jamCek1.size() <= 30
+        && data.suhu1 is string && data.suhu1.size() <= 30
+        && data.pic1 is string && data.pic1.size() <= 80
+        && data.jamCek2 is string && data.jamCek2.size() <= 30
+        && data.suhu2 is string && data.suhu2.size() <= 30
+        && data.pic2 is string && data.pic2.size() <= 80
+        && data.jamCek3 is string && data.jamCek3.size() <= 30
+        && data.suhu3 is string && data.suhu3.size() <= 30
+        && data.pic3 is string && data.pic3.size() <= 80
+        && data.keterangan is string && data.keterangan.size() <= 250
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -97,7 +334,6 @@ service cloud.firestore {
     // --- Collection Rules ---
 
     match /users/{userId} {
-      // PII Isolation: Only owner can read their own profile. Blanket list forbidden.
       allow get: if isOwner(userId) && isValidId(userId);
       allow list: if false;
 
@@ -148,7 +384,7 @@ service cloud.firestore {
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
           && incoming().diff(existing()).affectedKeys().hasOnly([
-            'periodeLabel', 'entryCount', 'photoCount', 'updatedAt'
+            'periodeLabel', 'entryCount', 'photoCount', 'selectedCategories', 'akgTargets', 'updatedAt'
           ])
           && exists(/databases/$(database)/documents/users/$(userId));
 
@@ -182,11 +418,316 @@ service cloud.firestore {
             && incoming().createdAt == existing().createdAt
             && incoming().updatedAt == request.time
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'dateIso', 'hariKe', 'namaMenu', 'photoDataUrl', 'updatedAt'
+              'dateIso', 'hariKe', 'namaMenu', 'photoDataUrl', 'nutritionByCategory', 'updatedAt'
             ])
             && exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId));
 
           allow delete: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(entryId);
+        }
+
+        // Editable Form Configs Subcollection (e.g. sampel_pertinggal)
+        match /forms/{formId} {
+          allow get: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(formId);
+          allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+
+          allow create: if isOwner(userId)
+            && isValidId(userId)
+            && isValidId(monthId)
+            && isValidId(formId)
+            && isValidSampleFormConfig(incoming())
+            && incoming().monthKey == monthId
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time
+            && (
+              exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId))
+              || existsAfter(/databases/$(database)/documents/users/$(userId)/months/$(monthId))
+            );
+
+          allow update: if isOwner(userId)
+            && isValidId(userId)
+            && isValidId(monthId)
+            && isValidId(formId)
+            && isValidSampleFormConfig(incoming())
+            && incoming().uid == existing().uid
+            && incoming().monthKey == existing().monthKey
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'logoDataUrl', 'logoCaption', 'unitName', 'formLabel', 'formTitle',
+              'docNumber', 'revision', 'effectiveDate', 'bulanLabel', 'tahunLabel',
+              'colLabels', 'verifierLine1', 'verifierLine2', 'verifierName', 'updatedAt'
+            ])
+            && exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId));
+
+          allow delete: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(formId);
+        }
+
+        // Sampel Pertinggal Rows Subcollection
+        match /sampleRows/{rowId} {
+          allow get: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(rowId);
+          allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+
+          allow create: if isOwner(userId)
+            && isValidId(userId)
+            && isValidId(monthId)
+            && isValidId(rowId)
+            && isValidSamplePertinggalRow(incoming())
+            && incoming().monthKey == monthId
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time
+            && (
+              exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId))
+              || existsAfter(/databases/$(database)/documents/users/$(userId)/months/$(monthId))
+            );
+
+          allow update: if isOwner(userId)
+            && isValidId(userId)
+            && isValidId(monthId)
+            && isValidId(rowId)
+            && isValidSamplePertinggalRow(incoming())
+            && incoming().uid == existing().uid
+            && incoming().monthKey == existing().monthKey
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'rowOrder', 'kodeIdentitas', 'jumlahSampel', 'kondisiOk', 'kondisiNok',
+              'penanggungJawab', 'masukTanggal', 'masukJam', 'keluarTanggal', 'keluarJam',
+              'updatedAt'
+            ])
+            && exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId));
+
+          allow delete: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(rowId);
+        }
+
+        // Temperature Monitoring Form Config Subcollection
+        match /tempForms/{formId} {
+          allow get: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(formId);
+          allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+
+          allow create: if isOwner(userId)
+            && isValidId(userId)
+            && isValidId(monthId)
+            && isValidId(formId)
+            && isValidTempFormConfig(incoming())
+            && incoming().monthKey == monthId
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time
+            && (
+              exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId))
+              || existsAfter(/databases/$(database)/documents/users/$(userId)/months/$(monthId))
+            );
+
+          allow update: if isOwner(userId)
+            && isValidId(userId)
+            && isValidId(monthId)
+            && isValidId(formId)
+            && isValidTempFormConfig(incoming())
+            && incoming().uid == existing().uid
+            && incoming().monthKey == existing().monthKey
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'logoDataUrl', 'logoCaption', 'unitName', 'formLabel', 'formTitle',
+              'docNumber', 'revision', 'effectiveDate', 'periodeLabel', 'tableLabels',
+              'sopTitle', 'sopSubtitle', 'updatedAt'
+            ])
+            && exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId));
+
+          allow delete: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(formId);
+        }
+
+        // Temperature Monitoring Rooms Subcollection
+        match /tempRooms/{roomId} {
+          allow get: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(roomId);
+          allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+
+          allow create: if isOwner(userId)
+            && isValidId(userId)
+            && isValidId(monthId)
+            && isValidId(roomId)
+            && isValidTempMonitoringRoom(incoming())
+            && incoming().monthKey == monthId
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time
+            && (
+              exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId))
+              || existsAfter(/databases/$(database)/documents/users/$(userId)/months/$(monthId))
+            );
+
+          allow update: if isOwner(userId)
+            && isValidId(userId)
+            && isValidId(monthId)
+            && isValidId(roomId)
+            && isValidTempMonitoringRoom(incoming())
+            && incoming().uid == existing().uid
+            && incoming().monthKey == existing().monthKey
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'roomOrder', 'roomName', 'presetKey', 'standardSuhu', 'standardRh',
+              'sopNote', 'updatedAt'
+            ])
+            && exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId));
+
+          allow delete: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(roomId);
+
+          // Daily Readings (1-31) Subcollection per Room
+          match /days/{dayId} {
+            allow get: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(roomId) && isValidId(dayId);
+            allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+
+            allow create: if isOwner(userId)
+              && isValidId(userId)
+              && isValidId(monthId)
+              && isValidId(roomId)
+              && isValidId(dayId)
+              && isValidTempDayReading(incoming())
+              && incoming().monthKey == monthId
+              && incoming().roomId == roomId
+              && incoming().createdAt == request.time
+              && incoming().updatedAt == request.time
+              && (
+                exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId)/tempRooms/$(roomId))
+                || existsAfter(/databases/$(database)/documents/users/$(userId)/months/$(monthId)/tempRooms/$(roomId))
+              );
+
+            allow update: if isOwner(userId)
+              && isValidId(userId)
+              && isValidId(monthId)
+              && isValidId(roomId)
+              && isValidId(dayId)
+              && isValidTempDayReading(incoming())
+              && incoming().uid == existing().uid
+              && incoming().monthKey == existing().monthKey
+              && incoming().roomId == existing().roomId
+              && incoming().day == existing().day
+              && incoming().createdAt == existing().createdAt
+              && incoming().updatedAt == request.time
+              && incoming().diff(existing()).affectedKeys().hasOnly([
+                'jam', 'suhu', 'rh', 'paraf', 'namaPetugas',
+                'photoDataUrl', 'detectedNote', 'updatedAt'
+              ])
+              && exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId)/tempRooms/$(roomId));
+
+            allow delete: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(roomId) && isValidId(dayId);
+          }
+        }
+
+        // Freezer & Chiller Form Config Subcollection
+        match /freezerForms/{formId} {
+          allow get: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(formId);
+          allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+
+          allow create: if isOwner(userId)
+            && isValidId(userId)
+            && isValidId(monthId)
+            && isValidId(formId)
+            && isValidFreezerFormConfig(incoming())
+            && incoming().monthKey == monthId
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time
+            && (
+              exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId))
+              || existsAfter(/databases/$(database)/documents/users/$(userId)/months/$(monthId))
+            );
+
+          allow update: if isOwner(userId)
+            && isValidId(userId)
+            && isValidId(monthId)
+            && isValidId(formId)
+            && isValidFreezerFormConfig(incoming())
+            && incoming().uid == existing().uid
+            && incoming().monthKey == existing().monthKey
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'logoDataUrl', 'logoCaption', 'unitName', 'formLabel', 'formTitle',
+              'docNumber', 'revision', 'effectiveDate', 'periodeLabel', 'colLabels',
+              'updatedAt'
+            ])
+            && exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId));
+
+          allow delete: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(formId);
+        }
+
+        // Freezer & Chiller Machines Subcollection (each machine = dedicated lampiran worksheet)
+        match /freezerMachines/{machineId} {
+          allow get: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(machineId);
+          allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+
+          allow create: if isOwner(userId)
+            && isValidId(userId)
+            && isValidId(monthId)
+            && isValidId(machineId)
+            && isValidFreezerMachine(incoming())
+            && incoming().monthKey == monthId
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time
+            && (
+              exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId))
+              || existsAfter(/databases/$(database)/documents/users/$(userId)/months/$(monthId))
+            );
+
+          allow update: if isOwner(userId)
+            && isValidId(userId)
+            && isValidId(monthId)
+            && isValidId(machineId)
+            && isValidFreezerMachine(incoming())
+            && incoming().uid == existing().uid
+            && incoming().monthKey == existing().monthKey
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'machineOrder', 'machineType', 'namaMesin', 'merk', 'noMesin',
+              'lokasi', 'normalSuhuBgn', 'bgnSopNote', 'conclusionHeader',
+              'repairPrompt', 'repairNote', 'updatedAt'
+            ])
+            && exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId));
+
+          allow delete: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(machineId);
+
+          // Daily Log Rows per Machine
+          match /rows/{rowId} {
+            allow get: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(machineId) && isValidId(rowId);
+            allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+
+            allow create: if isOwner(userId)
+              && isValidId(userId)
+              && isValidId(monthId)
+              && isValidId(machineId)
+              && isValidId(rowId)
+              && isValidFreezerLogRow(incoming())
+              && incoming().monthKey == monthId
+              && incoming().machineId == machineId
+              && incoming().createdAt == request.time
+              && incoming().updatedAt == request.time
+              && (
+                exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId)/freezerMachines/$(machineId))
+                || existsAfter(/databases/$(database)/documents/users/$(userId)/months/$(monthId)/freezerMachines/$(machineId))
+              );
+
+            allow update: if isOwner(userId)
+              && isValidId(userId)
+              && isValidId(monthId)
+              && isValidId(machineId)
+              && isValidId(rowId)
+              && isValidFreezerLogRow(incoming())
+              && incoming().uid == existing().uid
+              && incoming().monthKey == existing().monthKey
+              && incoming().machineId == existing().machineId
+              && incoming().createdAt == existing().createdAt
+              && incoming().updatedAt == request.time
+              && incoming().diff(existing()).affectedKeys().hasOnly([
+                'rowOrder', 'noLabel', 'tanggal',
+                'jamCek1', 'suhu1', 'pic1',
+                'jamCek2', 'suhu2', 'pic2',
+                'jamCek3', 'suhu3', 'pic3',
+                'keterangan', 'updatedAt'
+              ])
+              && exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId)/freezerMachines/$(machineId));
+
+            allow delete: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(machineId) && isValidId(rowId);
+          }
         }
       }
     }
