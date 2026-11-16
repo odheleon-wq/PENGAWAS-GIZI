@@ -15,11 +15,27 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginWithGoogle }) =
     try {
       await onLoginWithGoogle();
     } catch (err) {
-      setErrorMsg(
-        err instanceof Error
-          ? err.message
-          : 'Login dibatalkan atau terjadi kendala saat masuk dengan email aktif.'
-      );
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: unknown }).code || '')
+          : '';
+      const rawMessage = err instanceof Error ? err.message : '';
+
+      if (code === 'auth/unauthorized-domain' || rawMessage.includes('auth/unauthorized-domain')) {
+        const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+        setErrorMsg(
+          `Domain "${currentHost}" belum terdaftar di Firebase Authentication. Tambahkan "${currentHost}" pada menu Firebase Console → Authentication → Settings → Authorized domains, lalu coba masuk kembali.`
+        );
+      } else if (code === 'auth/popup-blocked' || rawMessage.includes('auth/popup-blocked')) {
+        setErrorMsg(
+          'Pop-up login diblokir oleh browser. Izinkan pop-up untuk situs ini di pengaturan browser Anda, lalu klik masuk kembali.'
+        );
+      } else {
+        setErrorMsg(
+          rawMessage ||
+            'Login dibatalkan atau terjadi kendala saat masuk dengan email aktif.'
+        );
+      }
     } finally {
       setLoading(false);
     }
