@@ -53,7 +53,7 @@ export const MonthlyArchiveList: React.FC<MonthlyArchiveListProps> = ({
             Arsip Rekapan Per Bulan
           </h2>
           <p className="mt-0.5 text-xs text-slate-600">
-            Setiap bulan tersimpan terpisah khusus untuk akun {profile.email}. Anda dapat membuka kembali atau mengunduh PDF F4 arsip bulan lampau kapan saja.
+            Setiap bulan tersimpan terpisah untuk {profile.namaSppg || 'dashboard SPPG ini'}. Anda dapat membuka kembali atau mengunduh PDF F4 arsip bulan lampau kapan saja.
           </p>
         </div>
 

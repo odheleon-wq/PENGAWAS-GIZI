@@ -40,6 +40,46 @@ import {
   SOP_BGN_ROOM_PRESETS,
 } from '../constants/temperatureStandards';
 import { getPeriodeLabel, INDONESIAN_MONTHS, parseMonthKey } from '../utils/dateUtils';
+import {
+  createLocalFreezerMachine,
+  createLocalTempRoom,
+  deleteLocalDailyMenuEntry,
+  deleteLocalFreezerLogRow,
+  deleteLocalFreezerMachine,
+  deleteLocalSampleRow,
+  deleteLocalTempRoom,
+  fetchLocalFreezerLogRowsOnce,
+  fetchLocalMonthEntriesOnce,
+  fetchLocalRoomDayReadingsOnce,
+  LOCAL_WORKSPACE_UID,
+  renumberLocalMonthEntriesChronologically,
+  saveLocalFreezerFormConfig,
+  saveLocalMonthNutritionConfig,
+  saveLocalSampleFormConfig,
+  saveLocalTempFormConfig,
+  saveLocalUserProfile,
+  seedAllLocalPresetTempRooms,
+  subscribeLocalFreezerFormConfig,
+  subscribeLocalFreezerLogRows,
+  subscribeLocalFreezerMachines,
+  subscribeLocalMonthEntries,
+  subscribeLocalMonthlyArchives,
+  subscribeLocalRoomDayReadings,
+  subscribeLocalSampleFormConfig,
+  subscribeLocalSampleRows,
+  subscribeLocalTempFormConfig,
+  subscribeLocalTempRooms,
+  subscribeLocalUserProfile,
+  updateLocalEntryNutritionMap,
+  updateLocalFreezerMachine,
+  updateLocalTempRoom,
+  upsertLocalDailyMenuEntry,
+  upsertLocalFreezerLogRow,
+  upsertLocalSampleRow,
+  upsertLocalTempDayReading,
+} from './localSppgStore';
+
+export { LOCAL_WORKSPACE_UID };
 
 function clampString(val: string, max: number): string {
   return val.trim().slice(0, max);
@@ -77,6 +117,9 @@ export function subscribeUserProfile(
   onData: (profile: SppgUserProfile | null) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalUserProfile(onData);
+  }
   const path = `users/${uid}`;
   return onSnapshot(
     doc(db, 'users', uid),
@@ -102,6 +145,9 @@ export async function saveUserProfile(
   email: string,
   input: Omit<SppgUserProfile, 'uid' | 'email' | 'createdAt' | 'updatedAt'>
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return saveLocalUserProfile(input);
+  }
   const path = `users/${uid}`;
   const ref = doc(db, 'users', uid);
 
@@ -150,6 +196,9 @@ export function subscribeMonthlyArchives(
   onData: (archives: MonthlyArchive[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalMonthlyArchives(onData);
+  }
   const path = `users/${uid}/months`;
   const q = query(
     collection(db, 'users', uid, 'months'),
@@ -182,6 +231,9 @@ export function subscribeMonthEntries(
   onData: (entries: DailyMenuEntry[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalMonthEntries(monthKey, onData);
+  }
   const path = `users/${uid}/months/${monthKey}/entries`;
   const q = query(
     collection(db, 'users', uid, 'months', monthKey, 'entries'),
@@ -212,6 +264,9 @@ export async function fetchMonthEntriesOnce(
   uid: string,
   monthKey: string
 ): Promise<DailyMenuEntry[]> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return fetchLocalMonthEntriesOnce(monthKey);
+  }
   const path = `users/${uid}/months/${monthKey}/entries`;
   try {
     const q = query(
@@ -282,6 +337,9 @@ export async function upsertDailyMenuEntry(
     photoDataUrl: string;
   }
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return upsertLocalDailyMenuEntry(monthKey, input);
+  }
   const uniqueSuffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const entryId = input.entryId || `${input.dateIso}_${uniqueSuffix}`;
   const path = `users/${uid}/months/${monthKey}/entries/${entryId}`;
@@ -346,6 +404,9 @@ export async function updateEntryNutritionMap(
   nutritionByCategory: Partial<Record<TargetCategoryId, NutritionValues>>,
   updatedNamaMenu?: string
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return updateLocalEntryNutritionMap(monthKey, entryId, nutritionByCategory, updatedNamaMenu);
+  }
   const path = `users/${uid}/months/${monthKey}/entries/${entryId}`;
   const entryRef = doc(db, 'users', uid, 'months', monthKey, 'entries', entryId);
 
@@ -377,6 +438,9 @@ export async function saveMonthNutritionConfig(
   selectedCategories: TargetCategoryId[],
   akgTargets?: AkgTargetsConfig
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return saveLocalMonthNutritionConfig(monthKey, selectedCategories, akgTargets);
+  }
   const path = `users/${uid}/months/${monthKey}`;
   const monthRef = doc(db, 'users', uid, 'months', monthKey);
   const { year, month } = parseMonthKey(monthKey);
@@ -427,6 +491,9 @@ export async function deleteDailyMenuEntry(
   monthKey: string,
   entryId: string
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return deleteLocalDailyMenuEntry(monthKey, entryId);
+  }
   const path = `users/${uid}/months/${monthKey}/entries/${entryId}`;
   try {
     await deleteDoc(doc(db, 'users', uid, 'months', monthKey, 'entries', entryId));
@@ -441,6 +508,9 @@ export async function renumberMonthEntriesChronologically(
   monthKey: string,
   entries: DailyMenuEntry[]
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return renumberLocalMonthEntriesChronologically(monthKey, entries);
+  }
   const path = `users/${uid}/months/${monthKey}/entries`;
   try {
     const sorted = [...entries].sort((a, b) => a.dateIso.localeCompare(b.dateIso));
@@ -511,6 +581,9 @@ export function subscribeSampleFormConfig(
   onData: (config: SampleFormConfig | null) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalSampleFormConfig(monthKey, onData);
+  }
   const path = `users/${uid}/months/${monthKey}/forms/sampel_pertinggal`;
   return onSnapshot(
     doc(db, 'users', uid, 'months', monthKey, 'forms', 'sampel_pertinggal'),
@@ -536,6 +609,9 @@ export async function saveSampleFormConfig(
   monthKey: string,
   input: Omit<SampleFormConfig, 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return saveLocalSampleFormConfig(monthKey, input, DEFAULT_SAMPLE_COLUMN_LABELS);
+  }
   const path = `users/${uid}/months/${monthKey}/forms/sampel_pertinggal`;
   const monthRef = doc(db, 'users', uid, 'months', monthKey);
   const formRef = doc(db, 'users', uid, 'months', monthKey, 'forms', 'sampel_pertinggal');
@@ -629,6 +705,9 @@ export function subscribeSampleRows(
   onData: (rows: SamplePertinggalRow[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalSampleRows(monthKey, onData);
+  }
   const path = `users/${uid}/months/${monthKey}/sampleRows`;
   const q = query(
     collection(db, 'users', uid, 'months', monthKey, 'sampleRows'),
@@ -662,6 +741,9 @@ export async function upsertSampleRow(
     id?: string;
   }
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return upsertLocalSampleRow(monthKey, input);
+  }
   const uniqueId =
     input.id || `row_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const path = `users/${uid}/months/${monthKey}/sampleRows/${uniqueId}`;
@@ -734,6 +816,9 @@ export async function deleteSampleRow(
   monthKey: string,
   rowId: string
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return deleteLocalSampleRow(monthKey, rowId);
+  }
   const path = `users/${uid}/months/${monthKey}/sampleRows/${rowId}`;
   try {
     await deleteDoc(doc(db, 'users', uid, 'months', monthKey, 'sampleRows', rowId));
@@ -786,6 +871,9 @@ export function subscribeTempFormConfig(
   onData: (config: TempFormConfig | null) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalTempFormConfig(monthKey, onData);
+  }
   const path = `users/${uid}/months/${monthKey}/tempForms/monitoring_suhu`;
   return onSnapshot(
     doc(db, 'users', uid, 'months', monthKey, 'tempForms', 'monitoring_suhu'),
@@ -811,6 +899,9 @@ export async function saveTempFormConfig(
   monthKey: string,
   input: Omit<TempFormConfig, 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return saveLocalTempFormConfig(monthKey, input, DEFAULT_TEMP_TABLE_LABELS);
+  }
   const path = `users/${uid}/months/${monthKey}/tempForms/monitoring_suhu`;
   const monthRef = doc(db, 'users', uid, 'months', monthKey);
   const formRef = doc(db, 'users', uid, 'months', monthKey, 'tempForms', 'monitoring_suhu');
@@ -896,6 +987,9 @@ export function subscribeTempRooms(
   onData: (rooms: TempMonitoringRoom[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalTempRooms(monthKey, onData);
+  }
   const path = `users/${uid}/months/${monthKey}/tempRooms`;
   const q = query(
     collection(db, 'users', uid, 'months', monthKey, 'tempRooms'),
@@ -934,6 +1028,9 @@ export async function createTempRoom(
     sopNote?: string;
   }
 ): Promise<string> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return createLocalTempRoom(monthKey, input);
+  }
   const roomId = `room_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const path = `users/${uid}/months/${monthKey}/tempRooms/${roomId}`;
   const monthRef = doc(db, 'users', uid, 'months', monthKey);
@@ -983,6 +1080,9 @@ export async function seedAllPresetTempRooms(
   monthKey: string,
   existingRooms: TempMonitoringRoom[]
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return seedAllLocalPresetTempRooms(monthKey, existingRooms);
+  }
   const path = `users/${uid}/months/${monthKey}/tempRooms`;
   const monthRef = doc(db, 'users', uid, 'months', monthKey);
   const { year, month } = parseMonthKey(monthKey);
@@ -1049,6 +1149,9 @@ export async function updateTempRoom(
     sopNote: string;
   }
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return updateLocalTempRoom(monthKey, roomId, input);
+  }
   const path = `users/${uid}/months/${monthKey}/tempRooms/${roomId}`;
   try {
     await updateDoc(doc(db, 'users', uid, 'months', monthKey, 'tempRooms', roomId), {
@@ -1070,6 +1173,9 @@ export async function deleteTempRoom(
   monthKey: string,
   roomId: string
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return deleteLocalTempRoom(monthKey, roomId);
+  }
   const path = `users/${uid}/months/${monthKey}/tempRooms/${roomId}`;
   try {
     // Delete daily readings subcollection documents first
@@ -1091,6 +1197,9 @@ export function subscribeRoomDayReadings(
   onData: (readings: TempDayReading[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalRoomDayReadings(monthKey, roomId, onData);
+  }
   const path = `users/${uid}/months/${monthKey}/tempRooms/${roomId}/days`;
   const q = query(
     collection(db, 'users', uid, 'months', monthKey, 'tempRooms', roomId, 'days'),
@@ -1122,6 +1231,9 @@ export async function fetchRoomDayReadingsOnce(
   monthKey: string,
   roomId: string
 ): Promise<TempDayReading[]> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return fetchLocalRoomDayReadingsOnce(monthKey, roomId);
+  }
   const path = `users/${uid}/months/${monthKey}/tempRooms/${roomId}/days`;
   try {
     const q = query(
@@ -1155,6 +1267,9 @@ export async function upsertTempDayReading(
     detectedNote?: string;
   }
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return upsertLocalTempDayReading(monthKey, roomId, input);
+  }
   const safeDay = Math.max(1, Math.min(31, Math.round(input.day)));
   const dayId = String(safeDay);
   const path = `users/${uid}/months/${monthKey}/tempRooms/${roomId}/days/${dayId}`;
@@ -1250,6 +1365,9 @@ export function subscribeFreezerFormConfig(
   onData: (config: FreezerFormConfig | null) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalFreezerFormConfig(monthKey, onData);
+  }
   const path = `users/${uid}/months/${monthKey}/freezerForms/freezer_chiller`;
   return onSnapshot(
     doc(db, 'users', uid, 'months', monthKey, 'freezerForms', 'freezer_chiller'),
@@ -1275,6 +1393,9 @@ export async function saveFreezerFormConfig(
   monthKey: string,
   input: Omit<FreezerFormConfig, 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return saveLocalFreezerFormConfig(monthKey, input, DEFAULT_FREEZER_COL_LABELS);
+  }
   const path = `users/${uid}/months/${monthKey}/freezerForms/freezer_chiller`;
   const monthRef = doc(db, 'users', uid, 'months', monthKey);
   const formRef = doc(db, 'users', uid, 'months', monthKey, 'freezerForms', 'freezer_chiller');
@@ -1366,6 +1487,9 @@ export function subscribeFreezerMachines(
   onData: (machines: FreezerMachine[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalFreezerMachines(monthKey, onData);
+  }
   const path = `users/${uid}/months/${monthKey}/freezerMachines`;
   const q = query(
     collection(db, 'users', uid, 'months', monthKey, 'freezerMachines'),
@@ -1406,6 +1530,9 @@ export async function createFreezerMachine(
     bgnSopNote?: string;
   }
 ): Promise<string> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return createLocalFreezerMachine(monthKey, input);
+  }
   const machineId = `unit_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const path = `users/${uid}/months/${monthKey}/freezerMachines/${machineId}`;
   const monthRef = doc(db, 'users', uid, 'months', monthKey);
@@ -1492,6 +1619,9 @@ export async function updateFreezerMachine(
   machineId: string,
   input: Omit<FreezerMachine, 'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return updateLocalFreezerMachine(monthKey, machineId, input);
+  }
   const path = `users/${uid}/months/${monthKey}/freezerMachines/${machineId}`;
   try {
     await updateDoc(doc(db, 'users', uid, 'months', monthKey, 'freezerMachines', machineId), {
@@ -1518,6 +1648,9 @@ export async function deleteFreezerMachine(
   monthKey: string,
   machineId: string
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return deleteLocalFreezerMachine(monthKey, machineId);
+  }
   const path = `users/${uid}/months/${monthKey}/freezerMachines/${machineId}`;
   try {
     const rowsRef = collection(
@@ -1547,6 +1680,9 @@ export function subscribeFreezerLogRows(
   onData: (rows: FreezerLogRow[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalFreezerLogRows(monthKey, machineId, onData);
+  }
   const path = `users/${uid}/months/${monthKey}/freezerMachines/${machineId}/rows`;
   const q = query(
     collection(db, 'users', uid, 'months', monthKey, 'freezerMachines', machineId, 'rows'),
@@ -1578,6 +1714,9 @@ export async function fetchFreezerLogRowsOnce(
   monthKey: string,
   machineId: string
 ): Promise<FreezerLogRow[]> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return fetchLocalFreezerLogRowsOnce(monthKey, machineId);
+  }
   const path = `users/${uid}/months/${monthKey}/freezerMachines/${machineId}/rows`;
   try {
     const q = query(
@@ -1605,6 +1744,9 @@ export async function upsertFreezerLogRow(
     'id' | 'uid' | 'monthKey' | 'machineId' | 'createdAt' | 'updatedAt'
   > & { id?: string }
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return upsertLocalFreezerLogRow(monthKey, machineId, input);
+  }
   const rowId =
     input.id || `row_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const path = `users/${uid}/months/${monthKey}/freezerMachines/${machineId}/rows/${rowId}`;
@@ -1676,6 +1818,9 @@ export async function deleteFreezerLogRow(
   machineId: string,
   rowId: string
 ): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return deleteLocalFreezerLogRow(monthKey, machineId, rowId);
+  }
   const path = `users/${uid}/months/${monthKey}/freezerMachines/${machineId}/rows/${rowId}`;
   try {
     await deleteDoc(

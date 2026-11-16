@@ -84,10 +84,10 @@ export const SppgProfileForm: React.FC<SppgProfileFormProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 px-6 py-4">
         <div>
           <h2 className="text-base font-semibold text-slate-900">
-            {isFirstTime ? 'Lengkapi Identitas SPPG untuk Email Ini' : 'Identitas SPPG & Format Kepala Laporan'}
+            {isFirstTime ? 'Lengkapi Identitas SPPG' : 'Identitas SPPG & Format Kepala Laporan'}
           </h2>
           <p className="mt-0.5 text-xs text-slate-500">
-            Data ini terhubung eksklusif ke akun <span className="font-medium text-slate-700">{profile.email}</span> dan otomatis mengisi kop tabel serta ekspor PDF F4.
+            Data ini otomatis mengisi kop tabel pada seluruh formulir serta hasil ekspor PDF F4.
           </p>
         </div>
         <button
@@ -109,7 +109,7 @@ export const SppgProfileForm: React.FC<SppgProfileFormProps> = ({
         {savedNotice && (
           <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs font-medium text-emerald-800">
             <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-            Identitas SPPG berhasil disimpan ke dashboard email Anda.
+            Identitas SPPG berhasil disimpan ke dashboard.
           </div>
         )}
 
