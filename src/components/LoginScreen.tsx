@@ -1,43 +1,165 @@
 import React, { useState } from 'react';
-import { CalendarDays, Camera, FileSpreadsheet, Lock, LogIn } from 'lucide-react';
+import {
+  AlertTriangle,
+  CalendarDays,
+  Camera,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  ExternalLink,
+  FileSpreadsheet,
+  Lock,
+  LogIn,
+} from 'lucide-react';
+import firebaseConfig from '../../firebase-applet-config.json';
 
 interface LoginScreenProps {
   onLoginWithGoogle: () => Promise<void>;
 }
 
+interface AuthErrorGuide {
+  code: string;
+  title: string;
+  summary: string;
+  steps: string[];
+  showDomainTools?: boolean;
+}
+
+function resolveAuthErrorGuide(err: unknown): AuthErrorGuide {
+  const code =
+    typeof err === 'object' && err !== null && 'code' in err
+      ? String((err as { code?: unknown }).code || '')
+      : '';
+  const rawMessage = err instanceof Error ? err.message : String(err || '');
+  const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+
+  if (code === 'auth/unauthorized-domain' || rawMessage.includes('auth/unauthorized-domain')) {
+    return {
+      code: 'auth/unauthorized-domain',
+      title: 'Domain Belum Diizinkan di Firebase',
+      summary: `Domain "${currentHost || 'saat ini'}" belum terdaftar pada daftar Authorized domains di Firebase Authentication.`,
+      showDomainTools: true,
+      steps: [
+        `Buka Firebase Console pada project "${firebaseConfig.projectId}" menggunakan akun Google pemilik project.`,
+        'Masuk ke menu Authentication → Settings → Authorized domains.',
+        `Klik "Add domain", ketik "${currentHost || 'pengawasgizi.vercel.app'}" tanpa https://, lalu klik Add.`,
+        'Muat ulang halaman ini (Refresh), lalu klik tombol masuk kembali.',
+      ],
+    };
+  }
+
+  if (code === 'auth/popup-blocked' || rawMessage.includes('auth/popup-blocked')) {
+    return {
+      code: 'auth/popup-blocked',
+      title: 'Pop-up Login Diblokir oleh Browser',
+      summary: 'Browser menahan jendela pemilihan akun Google sehingga proses masuk tidak dapat dilanjutkan.',
+      steps: [
+        'Klik ikon pop-up terblokir di ujung kanan bilah alamat browser, lalu pilih "Selalu izinkan pop-up" untuk situs ini.',
+        'Jika Anda membuka tautan dari dalam WhatsApp, Telegram, atau aplikasi media sosial, salin tautan lalu buka langsung di browser Chrome atau Safari.',
+        'Setelah izin pop-up aktif, klik tombol "Masuk dengan Email Aktif (Google)" kembali.',
+      ],
+    };
+  }
+
+  if (
+    code === 'auth/popup-closed-by-user' ||
+    code === 'auth/cancelled-popup-request' ||
+    rawMessage.includes('auth/popup-closed-by-user') ||
+    rawMessage.includes('auth/cancelled-popup-request')
+  ) {
+    return {
+      code: code || 'auth/popup-closed-by-user',
+      title: 'Jendela Pemilihan Akun Ditutup',
+      summary: 'Proses autentikasi dibatalkan sebelum akun Google selesai dipilih.',
+      steps: [
+        'Klik kembali tombol "Masuk dengan Email Aktif (Google)" dan tunggu hingga daftar email Google muncul.',
+        'Jangan menutup atau me-refresh jendela pop-up sebelum halaman dashboard SPPG terbuka.',
+      ],
+    };
+  }
+
+  if (code === 'auth/network-request-failed' || rawMessage.includes('auth/network-request-failed')) {
+    return {
+      code: 'auth/network-request-failed',
+      title: 'Koneksi Jaringan ke Server Autentikasi Gagal',
+      summary: 'Browser gagal terhubung ke layanan Google / Firebase Authentication.',
+      steps: [
+        'Pastikan perangkat terhubung ke jaringan Wi-Fi atau data seluler yang stabil.',
+        'Nonaktifkan sementara VPN, DNS privat ketat, atau ekstensi pemblokir skrip/iklan yang dapat menahan koneksi ke googleapis.com.',
+        'Muat ulang halaman ini lalu coba masuk kembali.',
+      ],
+    };
+  }
+
+  if (code === 'auth/operation-not-allowed' || rawMessage.includes('auth/operation-not-allowed')) {
+    return {
+      code: 'auth/operation-not-allowed',
+      title: 'Provider Login Google Belum Aktif',
+      summary: 'Metode masuk dengan Google belum diaktifkan pada konfigurasi Firebase project.',
+      steps: [
+        `Buka Firebase Console untuk project "${firebaseConfig.projectId}".`,
+        'Masuk ke Authentication → Sign-in method → pilih Google → aktifkan toggle Enable → isi Project support email → klik Save.',
+        'Muat ulang halaman dan coba masuk kembali.',
+      ],
+    };
+  }
+
+  if (code === 'auth/user-disabled' || rawMessage.includes('auth/user-disabled')) {
+    return {
+      code: 'auth/user-disabled',
+      title: 'Akses Akun Email Dinonaktifkan',
+      summary: 'Akun email ini berstatus nonaktif di Firebase Authentication project.',
+      steps: [
+        'Silakan pilih email aktif Google lainnya untuk masuk ke dashboard SPPG.',
+        'Atau hubungi admin project Firebase untuk mengaktifkan kembali akun di menu Authentication → Users.',
+      ],
+    };
+  }
+
+  return {
+    code: code || 'auth/unknown',
+    title: 'Gagal Masuk dengan Email Aktif',
+    summary:
+      rawMessage || 'Terjadi kendala saat menghubungkan akun Google Anda ke dashboard SPPG.',
+    steps: [
+      'Pastikan pop-up browser diizinkan untuk situs ini dan koneksi internet stabil.',
+      'Jika dibuka melalui domain baru (misalnya Vercel atau domain kustom), pastikan domain tersebut sudah ditambahkan di Firebase Console → Authentication → Settings → Authorized domains.',
+      'Coba muat ulang halaman atau buka melalui browser Chrome/Safari terbaru.',
+    ],
+  };
+}
+
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginWithGoogle }) => {
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorGuide, setErrorGuide] = useState<AuthErrorGuide | null>(null);
+  const [showHelpPanel, setShowHelpPanel] = useState(false);
+  const [copiedHost, setCopiedHost] = useState(false);
+
+  const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+  const firebaseAuthSettingsUrl = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/settings`;
 
   const handleLogin = async () => {
-    setErrorMsg(null);
+    setErrorGuide(null);
     setLoading(true);
     try {
       await onLoginWithGoogle();
     } catch (err) {
-      const code =
-        typeof err === 'object' && err !== null && 'code' in err
-          ? String((err as { code?: unknown }).code || '')
-          : '';
-      const rawMessage = err instanceof Error ? err.message : '';
-
-      if (code === 'auth/unauthorized-domain' || rawMessage.includes('auth/unauthorized-domain')) {
-        const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
-        setErrorMsg(
-          `Domain "${currentHost}" belum terdaftar di Firebase Authentication. Tambahkan "${currentHost}" pada menu Firebase Console → Authentication → Settings → Authorized domains, lalu coba masuk kembali.`
-        );
-      } else if (code === 'auth/popup-blocked' || rawMessage.includes('auth/popup-blocked')) {
-        setErrorMsg(
-          'Pop-up login diblokir oleh browser. Izinkan pop-up untuk situs ini di pengaturan browser Anda, lalu klik masuk kembali.'
-        );
-      } else {
-        setErrorMsg(
-          rawMessage ||
-            'Login dibatalkan atau terjadi kendala saat masuk dengan email aktif.'
-        );
-      }
+      setErrorGuide(resolveAuthErrorGuide(err));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCopyHost = async () => {
+    if (!currentHost) return;
+    try {
+      await navigator.clipboard.writeText(currentHost);
+      setCopiedHost(true);
+      setTimeout(() => setCopiedHost(false), 2000);
+    } catch {
+      // Fallback for restricted clipboard permissions
+      setCopiedHost(false);
     }
   };
 
@@ -99,7 +221,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginWithGoogle }) =
           <div className="lg:col-span-5">
             <div className="rounded-xl border border-slate-200 bg-white p-7 shadow-xs">
               <div className="mb-6 flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-600 text-white">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-600 text-white shrink-0">
                   <FileSpreadsheet className="h-5 w-5" />
                 </div>
                 <div>
@@ -108,9 +230,58 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginWithGoogle }) =
                 </div>
               </div>
 
-              {errorMsg && (
-                <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs text-red-700">
-                  {errorMsg}
+              {errorGuide && (
+                <div
+                  role="alert"
+                  className="mb-5 rounded-lg border border-red-200 bg-red-50/90 p-4 text-xs text-red-900 space-y-3"
+                >
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 text-red-600 shrink-0" />
+                    <div className="space-y-1 min-w-0">
+                      <div className="font-semibold text-red-900">{errorGuide.title}</div>
+                      <p className="leading-relaxed text-red-800">{errorGuide.summary}</p>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-red-200/80 pt-2.5 space-y-1.5">
+                    <div className="font-semibold text-red-900">Langkah Mengatasi:</div>
+                    <ol className="list-decimal pl-4 space-y-1 text-red-800 leading-relaxed">
+                      {errorGuide.steps.map((step, index) => (
+                        <li key={index}>{step}</li>
+                      ))}
+                    </ol>
+                  </div>
+
+                  {errorGuide.showDomainTools && currentHost && (
+                    <div className="border-t border-red-200/80 pt-2.5 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyHost()}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-red-800 hover:bg-red-100/60 transition-colors"
+                      >
+                        {copiedHost ? (
+                          <>
+                            <Check className="h-3.5 w-3.5 text-emerald-600" />
+                            Domain Disalin ({currentHost})
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3.5 w-3.5" />
+                            Salin Domain: {currentHost}
+                          </>
+                        )}
+                      </button>
+                      <a
+                        href={firebaseAuthSettingsUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 rounded-md border border-red-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-red-800 hover:bg-red-100/60 transition-colors"
+                      >
+                        Buka Firebase Console
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -124,8 +295,60 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginWithGoogle }) =
                 {loading ? 'Membuka Pilihan Email...' : 'Masuk dengan Email Aktif (Google)'}
               </button>
 
-              <div className="mt-5 border-t border-slate-100 pt-4 text-xs leading-relaxed text-slate-500">
-                Sistem akan menampilkan pemilih akun Google agar Anda bisa memilih email aktif yang berbeda untuk setiap unit SPPG.
+              <div className="mt-5 border-t border-slate-100 pt-4 space-y-3 text-xs leading-relaxed text-slate-500">
+                <p>
+                  Sistem akan menampilkan pemilih akun Google agar Anda bisa memilih email aktif yang berbeda untuk setiap unit SPPG.
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() => setShowHelpPanel((prev) => !prev)}
+                  className="inline-flex items-center gap-1 text-xs font-medium text-slate-700 hover:text-slate-900 underline-offset-2 hover:underline"
+                >
+                  <span>Panduan jika mengalami kendala login</span>
+                  {showHelpPanel ? (
+                    <ChevronUp className="h-3.5 w-3.5" />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  )}
+                </button>
+
+                {showHelpPanel && (
+                  <div className="border-t border-slate-100 pt-3 space-y-2.5 text-slate-600">
+                    <div>
+                      <div className="font-semibold text-slate-800">
+                        1. Error Domain Tidak Diizinkan (Vercel / Domain Kustom)
+                      </div>
+                      <p className="mt-0.5">
+                        Tambahkan domain{' '}
+                        <span className="font-mono tabular-nums text-slate-800">
+                          {currentHost || 'domain-anda.vercel.app'}
+                        </span>{' '}
+                        ke menu{' '}
+                        <span className="font-medium text-slate-800">
+                          Firebase Console → Authentication → Settings → Authorized domains
+                        </span>
+                        .
+                      </p>
+                    </div>
+                    <div>
+                      <div className="font-semibold text-slate-800">
+                        2. Pop-up Akun Google Tidak Muncul / Diblokir
+                      </div>
+                      <p className="mt-0.5">
+                        Izinkan pop-up pada pengaturan browser, dan hindari membuka tautan dari browser internal aplikasi (seperti WhatsApp); buka langsung di Chrome atau Safari.
+                      </p>
+                    </div>
+                    <div>
+                      <div className="font-semibold text-slate-800">
+                        3. Koneksi Terputus atau Diblokir Ekstensi
+                      </div>
+                      <p className="mt-0.5">
+                        Pastikan internet stabil dan nonaktifkan sementara VPN atau pemblokir skrip yang menghalangi domain autentikasi Google.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
