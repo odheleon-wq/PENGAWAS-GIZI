@@ -1402,7 +1402,7 @@ export async function upsertLocalMasterMenuPlan(
     ...((await readKey<Record<string, MasterMenuPlan>>(`masterMenus:${monthKey}`)) || {}),
   };
   const cycleMode = input.cycleMode || '4_minggu';
-  const categoryIds =
+  const categoryIds: TargetCategoryId[] =
     input.categoryIds && input.categoryIds.length > 0 ? input.categoryIds : ['sd_1_3'];
 
   map[planId] = {

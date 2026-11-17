@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   Archive,
+  BookOpen,
   Building2,
   Calculator,
   Calendar,
@@ -14,6 +15,7 @@ import {
   LayoutDashboard,
   ListOrdered,
   Menu,
+  PackageCheck,
   ShoppingCart,
   Snowflake,
   Thermometer,
@@ -28,6 +30,7 @@ import {
   deleteFoodTempDayBlock,
   deleteFreezerLogRow,
   deleteFreezerMachine,
+  deleteMasterMenuPlan,
   deleteSampleRow,
   deleteTempRoom,
   fetchFreezerLogRowsOnce,
@@ -36,6 +39,7 @@ import {
   getDefaultFoodCostDayPlan,
   getDefaultFoodTempFormConfig,
   getDefaultFreezerFormConfig,
+  getDefaultMasterMenuPlan,
   getDefaultRawMaterialRecapDayConfig,
   getDefaultSampleFormConfig,
   getDefaultTempFormConfig,
@@ -57,6 +61,7 @@ import {
   subscribeFreezerMachines,
   subscribeMonthEntries,
   subscribeMonthFoodCostPlans,
+  subscribeMonthMasterMenus,
   subscribeMonthlyArchives,
   subscribeMonthPmRecords,
   subscribeMonthPoRecaps,
@@ -75,6 +80,7 @@ import {
   upsertFoodCostDayPlan,
   upsertFoodTempDayBlock,
   upsertFreezerLogRow,
+  upsertMasterMenuPlan,
   upsertRawMaterialRecapDayConfig,
   upsertSampleRow,
   upsertTempDayReading,
@@ -85,6 +91,7 @@ import type {
   DailyMenuEntry,
   DailyPmRecord,
   FoodCostDayPlan,
+  FoodCostWorksheet,
   FoodTempDayBlock,
   FoodTempFormConfig,
   FoodTempSheetType,
@@ -92,6 +99,8 @@ import type {
   FreezerLogRow,
   FreezerMachine,
   FreezerMachineType,
+  MasterMenuDayCell,
+  MasterMenuPlan,
   MonthlyArchive,
   NutritionValues,
   PdfOrientation,
@@ -118,9 +127,20 @@ import {
   shiftMonthKey,
 } from './utils/dateUtils';
 import {
+  getWorksheetDefaultTitle,
+  getWorksheetSideLabelDefault,
+} from './utils/foodCostCalculator';
+import { normalizeLogoSettings } from './utils/logoResolver';
+import {
+  buildFoodCostRowsFromMasterDay,
+  formatMasterMenuDayAsMenuString,
+} from './utils/masterMenuHelper';
+import { mergeTkpiCatalog } from './utils/tkpiCsvParser';
+import {
   exportFoodCostNutritionToF4Pdf,
   exportFoodTemperatureToF4Pdf,
   exportFreezerChillerToF4Pdf,
+  exportMasterMenuToF4Pdf,
   exportNutritionToF4Pdf,
   exportRawMaterialAndPoToF4Pdf,
   exportRekapanToF4Pdf,
@@ -130,6 +150,7 @@ import {
 } from './utils/pdfExporter';
 import { SppgProfileForm } from './components/SppgProfileForm';
 import { DashboardCompletionPanel } from './components/DashboardCompletionPanel';
+import { MasterMenuView } from './components/MasterMenuView';
 import { RekapanTablePreview } from './components/RekapanTablePreview';
 import { EntryEditorModal } from './components/EntryEditorModal';
 import { MonthCalendarView } from './components/MonthCalendarView';
@@ -197,6 +218,7 @@ export default function App() {
   const [tkpiSyncConfig, setTkpiSyncConfig] = useState<TkpiSyncConfig | null>(null);
   const [tkpiModalOpen, setTkpiModalOpen] = useState(false);
 
+  const [masterMenus, setMasterMenus] = useState<MasterMenuPlan[]>([]);
   const [pmRecords, setPmRecords] = useState<DailyPmRecord[]>([]);
   const [foodCostPlans, setFoodCostPlans] = useState<FoodCostDayPlan[]>([]);
   const [poRecaps, setPoRecaps] = useState<RawMaterialRecapDayConfig[]>([]);
@@ -361,6 +383,13 @@ export default function App() {
       (err) => setErrorBanner(err.message)
     );
 
+    const unsubMasterMenus = subscribeMonthMasterMenus(
+      workspaceUid,
+      activeMonthKey,
+      (list) => setMasterMenus(list),
+      (err) => setErrorBanner(err.message)
+    );
+
     const unsubPoRecaps = subscribeMonthPoRecaps(
       workspaceUid,
       activeMonthKey,
@@ -380,6 +409,7 @@ export default function App() {
       unsubFoodTempBlocks();
       unsubPmRecords();
       unsubFoodCostPlans();
+      unsubMasterMenus();
       unsubPoRecaps();
     };
   }, [workspaceUid, activeMonthKey]);
@@ -603,6 +633,7 @@ export default function App() {
       config: effectiveTempConfig,
       sheets,
       allRoomsForSop: tempRooms,
+      profile,
       orientation: pdfOrientation,
     });
   };
@@ -677,6 +708,7 @@ export default function App() {
     exportFreezerChillerToF4Pdf({
       config: effectiveFreezerConfig,
       sheets,
+      profile,
       orientation: pdfOrientation,
     });
   };
@@ -741,7 +773,161 @@ export default function App() {
     await upsertRawMaterialRecapDayConfig(workspaceUid, activeMonthKey, cfg);
   };
 
+  const handleSaveMasterMenuPlan = async (
+    planInput: Omit<MasterMenuPlan, 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'> & {
+      id?: string;
+    }
+  ): Promise<string> => {
+    return upsertMasterMenuPlan(workspaceUid, activeMonthKey, planInput);
+  };
+
+  const handleDeleteMasterMenuPlan = async (planId: string) => {
+    await deleteMasterMenuPlan(workspaceUid, activeMonthKey, planId);
+  };
+
+  const handleSyncGlobalLeftLogo = async (dataUrl: string, widthPx: number) => {
+    const currentSettings = normalizeLogoSettings(profile.logoSettings);
+    await saveUserProfile(workspaceUid, profile.email, {
+      reportTitle: profile.reportTitle,
+      namaSppg: profile.namaSppg,
+      idSppg: profile.idSppg,
+      alamat: profile.alamat,
+      kabKota: profile.kabKota,
+      provinsi: profile.provinsi,
+      namaSppi: profile.namaSppi,
+      nomorHp: profile.nomorHp,
+      logoSettings: {
+        ...currentSettings,
+        leftLogoDataUrl: dataUrl,
+        leftLogoWidthPx: widthPx,
+        autoLinkLeftLogo: true,
+      },
+    });
+  };
+
+  const handleSendMasterMenuDaysToFoodCost = async (
+    plan: MasterMenuPlan,
+    days: MasterMenuDayCell[]
+  ): Promise<number> => {
+    const tkpiCatalog = mergeTkpiCatalog(
+      tkpiSyncConfig?.syncedItems || [],
+      tkpiSyncConfig?.customItems || []
+    );
+    const categories =
+      plan.categoryIds && plan.categoryIds.length > 0 ? plan.categoryIds : (['sd_1_3'] as TargetCategoryId[]);
+    const sortedTargetKey = [...categories].sort().join(',');
+
+    let updatedCount = 0;
+    let firstDateSent = '';
+
+    for (const day of days) {
+      if (!day.dateIso) continue;
+      const matchedEntry = entries.find((e) => e.dateIso === day.dateIso);
+      const existingPlan = foodCostPlans.find((p) => p.dateIso === day.dateIso);
+      const basePlan =
+        existingPlan ||
+        getDefaultFoodCostDayPlan(
+          workspaceUid,
+          activeMonthKey,
+          day.dateIso,
+          matchedEntry?.hariKe || day.menuNumber || 1,
+          profile
+        );
+
+      const newRows = buildFoodCostRowsFromMasterDay(day, tkpiCatalog);
+      if (newRows.length === 0) continue;
+
+      const existingIdx = basePlan.worksheets.findIndex(
+        (ws) => !ws.isAllergySheet && [...ws.categoryIds].sort().join(',') === sortedTargetKey
+      );
+
+      let nextWorksheets: FoodCostWorksheet[];
+      if (existingIdx >= 0) {
+        const targetWs = basePlan.worksheets[existingIdx];
+        const updatedWs: FoodCostWorksheet = {
+          ...targetWs,
+          categoryIds: categories,
+          rows: newRows,
+        };
+        nextWorksheets = [
+          updatedWs,
+          ...basePlan.worksheets.filter((_, idx) => idx !== existingIdx),
+        ];
+      } else {
+        const createdWs: FoodCostWorksheet = {
+          id: `ws_mm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`,
+          title: getWorksheetDefaultTitle(categories, false, 'auto'),
+          sideLabel: getWorksheetSideLabelDefault(categories, false),
+          categoryIds: categories,
+          portionScope: 'auto',
+          isAllergySheet: false,
+          bumbuPercent: 10,
+          rows: newRows,
+        };
+        const hasRealExisting = existingPlan && existingPlan.worksheets.some((w) => w.rows.length > 0);
+        nextWorksheets = hasRealExisting
+          ? [createdWs, ...basePlan.worksheets]
+          : [createdWs];
+      }
+
+      await upsertFoodCostDayPlan(workspaceUid, activeMonthKey, {
+        dateIso: basePlan.dateIso,
+        hariKe: basePlan.hariKe,
+        headerLine1: basePlan.headerLine1,
+        headerLine2: basePlan.headerLine2,
+        headerLine3: basePlan.headerLine3,
+        headerAlamat: basePlan.headerAlamat,
+        logoDataUrl: basePlan.logoDataUrl,
+        logoWidthPx: basePlan.logoWidthPx,
+        logoRightDataUrl: basePlan.logoRightDataUrl,
+        logoRightWidthPx: basePlan.logoRightWidthPx,
+        followGlobalLeftLogo: basePlan.followGlobalLeftLogo,
+        followGlobalRightLogo: basePlan.followGlobalRightLogo,
+        worksheets: nextWorksheets,
+      });
+
+      if (!firstDateSent) firstDateSent = day.dateIso;
+      updatedCount += 1;
+    }
+
+    if (firstDateSent && firstDateSent.startsWith(activeMonthKey)) {
+      setActiveWorkDateIso(firstDateSent);
+    }
+
+    return updatedCount;
+  };
+
+  const handleSyncMasterMenuToRekapan = async (plan: MasterMenuPlan): Promise<number> => {
+    let syncedCount = 0;
+    const days = (plan.weeks || []).flatMap((w) => w.days || []);
+    for (const day of days) {
+      if (!day.dateIso) continue;
+      const namaMenu = formatMasterMenuDayAsMenuString(day);
+      if (!namaMenu) continue;
+      const existing = entries.find((e) => e.dateIso === day.dateIso);
+      await upsertDailyMenuEntry(workspaceUid, activeMonthKey, {
+        entryId: existing?.id,
+        dateIso: day.dateIso,
+        hariKe: existing?.hariKe || day.menuNumber || syncedCount + 1,
+        namaMenu,
+        photoDataUrl: existing?.photoDataUrl || '',
+      });
+      syncedCount += 1;
+    }
+    return syncedCount;
+  };
+
   const handleDownloadPdf = () => {
+    if (activeTab === 'master_menu') {
+      const plan =
+        masterMenus[0] || getDefaultMasterMenuPlan(workspaceUid, activeMonthKey, profile);
+      exportMasterMenuToF4Pdf({
+        plan,
+        profile,
+        orientation: pdfOrientation,
+      });
+      return;
+    }
     if (activeTab === 'foodcost') {
       const matchedEntry = entries.find((e) => e.dateIso === activeWorkDateIso);
       const plan =
@@ -757,6 +943,7 @@ export default function App() {
       exportFoodCostNutritionToF4Pdf({
         plan,
         pmRecord,
+        profile,
         orientation: pdfOrientation,
       });
       return;
@@ -775,11 +962,12 @@ export default function App() {
       exportUpdatePmToF4Pdf({
         record,
         viewMode: 'both',
+        profile,
         orientation: pdfOrientation,
       });
       return;
     }
-    if (activeTab === 'po_bahan') {
+    if (activeTab === 'rekap_bahan' || activeTab === 'po_bahan') {
       const matchedEntry = entries.find((e) => e.dateIso === activeWorkDateIso);
       const recapConfig =
         poRecaps.find((c) => c.dateIso === activeWorkDateIso) ||
@@ -796,7 +984,8 @@ export default function App() {
         recapConfig,
         foodCostPlan,
         pmRecord,
-        mode: 'both',
+        mode: activeTab === 'rekap_bahan' ? 'rekap' : 'po',
+        profile,
         orientation: pdfOrientation,
       });
       return;
@@ -806,6 +995,7 @@ export default function App() {
         config: effectiveFoodTempConfig,
         blocks: foodTempBlocks,
         sheetsToExport: ['masak', 'ompreng'],
+        profile,
         orientation: pdfOrientation,
       });
       return;
@@ -816,6 +1006,7 @@ export default function App() {
         exportFreezerChillerToF4Pdf({
           config: effectiveFreezerConfig,
           sheets: [{ machine: activeMachine, rows: freezerLogRows }],
+          profile,
           orientation: pdfOrientation,
         });
       }
@@ -828,6 +1019,7 @@ export default function App() {
           config: effectiveTempConfig,
           sheets: [{ room: activeRoom, readings: tempDayReadings }],
           allRoomsForSop: tempRooms,
+          profile,
           orientation: pdfOrientation,
         });
       }
@@ -837,6 +1029,7 @@ export default function App() {
       exportSamplePertinggalToF4Pdf({
         config: effectiveSampleConfig,
         rows: sampleRows,
+        profile,
         orientation: pdfOrientation,
         minPrintableRows: minSamplePrintableRows,
       });
@@ -873,11 +1066,13 @@ export default function App() {
 
   const navItems: Array<{ id: WorkspaceTab; label: string; icon: React.ReactNode }> = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="h-4 w-4" /> },
-    { id: 'rekapan', label: 'Tabel Rekapan & PDF', icon: <FileSpreadsheet className="h-4 w-4" /> },
-    { id: 'gizi', label: 'Rekapan Nilai Gizi', icon: <Activity className="h-4 w-4" /> },
-    { id: 'foodcost', label: 'Nilai Gizi & Food Cost', icon: <Calculator className="h-4 w-4" /> },
+    { id: 'master_menu', label: 'Master Menu', icon: <BookOpen className="h-4 w-4" /> },
     { id: 'update_pm', label: 'Update PM', icon: <Users className="h-4 w-4" /> },
-    { id: 'po_bahan', label: 'Rekap Bahan Baku & PO', icon: <ShoppingCart className="h-4 w-4" /> },
+    { id: 'rekap_bahan', label: 'Rekap Bahan Baku', icon: <PackageCheck className="h-4 w-4" /> },
+    { id: 'po_bahan', label: 'PO Bahan Baku', icon: <ShoppingCart className="h-4 w-4" /> },
+    { id: 'rekapan', label: 'Rekapan Menu', icon: <FileSpreadsheet className="h-4 w-4" /> },
+    { id: 'gizi', label: 'Nilai Gizi', icon: <Activity className="h-4 w-4" /> },
+    { id: 'foodcost', label: 'Nilai Gizi & Food Cost', icon: <Calculator className="h-4 w-4" /> },
     { id: 'sampel', label: 'Form Sampel Pertinggal', icon: <ClipboardCheck className="h-4 w-4" /> },
     { id: 'suhu', label: 'Monitoring Suhu Ruangan', icon: <Thermometer className="h-4 w-4" /> },
     { id: 'freezer', label: 'Suhu Freezer & Chiller', icon: <Snowflake className="h-4 w-4" /> },
@@ -996,8 +1191,10 @@ export default function App() {
             <button
               type="button"
               disabled={
+                activeTab !== 'master_menu' &&
                 activeTab !== 'foodcost' &&
                 activeTab !== 'update_pm' &&
+                activeTab !== 'rekap_bahan' &&
                 activeTab !== 'po_bahan' &&
                 activeTab !== 'sampel' &&
                 activeTab !== 'suhu' &&
@@ -1063,10 +1260,12 @@ export default function App() {
 
           {/* Month & F4 Settings Strip */}
           {(activeTab === 'dashboard' ||
+            activeTab === 'master_menu' ||
             activeTab === 'rekapan' ||
             activeTab === 'gizi' ||
             activeTab === 'foodcost' ||
             activeTab === 'update_pm' ||
+            activeTab === 'rekap_bahan' ||
             activeTab === 'po_bahan' ||
             activeTab === 'sampel' ||
             activeTab === 'suhu' ||
@@ -1198,6 +1397,27 @@ export default function App() {
             </div>
           )}
 
+          {activeTab === 'master_menu' && (
+            <MasterMenuView
+              uid={workspaceUid}
+              monthKey={activeMonthKey}
+              profile={profile}
+              plans={masterMenus}
+              onSavePlan={handleSaveMasterMenuPlan}
+              onDeletePlan={handleDeleteMasterMenuPlan}
+              onSendDaysToFoodCost={handleSendMasterMenuDaysToFoodCost}
+              onSyncToRekapan={handleSyncMasterMenuToRekapan}
+              onSyncGlobalLeftLogo={handleSyncGlobalLeftLogo}
+              onExportPdf={(plan) => {
+                exportMasterMenuToF4Pdf({
+                  plan,
+                  profile,
+                  orientation: pdfOrientation,
+                });
+              }}
+            />
+          )}
+
           {activeTab === 'rekapan' && (
             entriesLoading ? (
               <div className="rounded-xl border border-slate-200 bg-white p-12 text-center text-xs text-slate-500">
@@ -1265,17 +1485,20 @@ export default function App() {
               entries={entries}
               pmRecords={pmRecords}
               foodCostPlans={foodCostPlans}
+              masterMenus={masterMenus}
               tkpiSyncConfig={tkpiSyncConfig}
               activeDateIso={activeWorkDateIso}
               onChangeDateIso={setActiveWorkDateIso}
               onSaveDayPlan={handleSaveFoodCostPlan}
               onSyncNutritionToEntry={handleSyncWorksheetNutritionToEntry}
+              onSyncGlobalLeftLogo={handleSyncGlobalLeftLogo}
               onOpenTkpiModal={() => setTkpiModalOpen(true)}
               onExportPdf={(plan, pmRecord, activeWorksheetId) => {
                 exportFoodCostNutritionToF4Pdf({
                   plan,
                   pmRecord,
                   worksheetIds: activeWorksheetId ? [activeWorksheetId] : undefined,
+                  profile,
                   orientation: pdfOrientation,
                 });
               }}
@@ -1292,18 +1515,21 @@ export default function App() {
               activeDateIso={activeWorkDateIso}
               onChangeDateIso={setActiveWorkDateIso}
               onSaveRecord={handleSavePmRecord}
+              onSyncGlobalLeftLogo={handleSyncGlobalLeftLogo}
               onExportPdf={(record, viewMode) => {
                 exportUpdatePmToF4Pdf({
                   record,
                   viewMode,
+                  profile,
                   orientation: pdfOrientation,
                 });
               }}
             />
           )}
 
-          {activeTab === 'po_bahan' && (
+          {(activeTab === 'rekap_bahan' || activeTab === 'po_bahan') && (
             <RekapBahanBakuPoView
+              key={activeTab}
               uid={workspaceUid}
               profile={profile}
               monthKey={activeMonthKey}
@@ -1312,14 +1538,17 @@ export default function App() {
               foodCostPlans={foodCostPlans}
               poRecaps={poRecaps}
               activeDateIso={activeWorkDateIso}
+              initialSubTab={activeTab === 'po_bahan' ? 'po' : 'rekap'}
               onChangeDateIso={setActiveWorkDateIso}
               onSaveRecapConfig={handleSavePoRecapConfig}
+              onSyncGlobalLeftLogo={handleSyncGlobalLeftLogo}
               onExportPdf={(recapConfig, foodCostPlan, pmRecord, mode) => {
                 exportRawMaterialAndPoToF4Pdf({
                   recapConfig,
                   foodCostPlan,
                   pmRecord,
                   mode,
+                  profile,
                   orientation: pdfOrientation,
                 });
               }}
@@ -1338,6 +1567,7 @@ export default function App() {
               onSaveConfig={handleSaveSampleConfig}
               onSaveRow={handleSaveSampleRow}
               onDeleteRow={handleDeleteSampleRow}
+              onSyncGlobalLeftLogo={handleSyncGlobalLeftLogo}
             />
           )}
 
@@ -1358,6 +1588,7 @@ export default function App() {
               onSaveConfig={handleSaveTempConfig}
               onSaveDayReading={handleSaveTempDayReading}
               onExportAllRoomsPdf={handleExportAllTempRoomsPdf}
+              onSyncGlobalLeftLogo={handleSyncGlobalLeftLogo}
             />
           )}
 
@@ -1378,6 +1609,7 @@ export default function App() {
               onSaveRow={handleSaveFreezerRow}
               onDeleteRow={handleDeleteFreezerRow}
               onExportAllMachinesPdf={handleExportAllFreezerMachinesPdf}
+              onSyncGlobalLeftLogo={handleSyncGlobalLeftLogo}
             />
           )}
 
@@ -1394,6 +1626,7 @@ export default function App() {
               onSaveBlock={handleSaveFoodTempBlock}
               onDeleteBlock={handleDeleteFoodTempBlock}
               onSeedDefaultBlocks={handleSeedDefaultFoodTempBlocks}
+              onSyncGlobalLeftLogo={handleSyncGlobalLeftLogo}
             />
           )}
 

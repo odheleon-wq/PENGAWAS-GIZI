@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Check,
   Edit3,
@@ -8,7 +8,6 @@ import {
   Trash2,
   Upload,
   Wand2,
-  X,
 } from 'lucide-react';
 import { DEFAULT_SAMPLE_COLUMN_LABELS } from '../services/sppgService';
 import type {
@@ -18,6 +17,8 @@ import type {
   SamplePertinggalRow,
   SppgUserProfile,
 } from '../types';
+import { resolveDocumentLogos } from '../utils/logoResolver';
+import { LogoUploadModal } from './LogoUploadModal';
 
 interface SamplePertinggalViewProps {
   profile: SppgUserProfile;
@@ -36,6 +37,7 @@ interface SamplePertinggalViewProps {
     }
   ) => Promise<void>;
   onDeleteRow: (rowId: string) => Promise<void>;
+  onSyncGlobalLeftLogo?: (dataUrl: string, widthPx: number) => Promise<void>;
 }
 
 export const SamplePertinggalView: React.FC<SamplePertinggalViewProps> = ({
@@ -49,15 +51,16 @@ export const SamplePertinggalView: React.FC<SamplePertinggalViewProps> = ({
   onSaveConfig,
   onSaveRow,
   onDeleteRow,
+  onSyncGlobalLeftLogo,
 }) => {
   const [showFormatEditor, setShowFormatEditor] = useState(false);
   const [draftConfig, setDraftConfig] = useState<SampleFormConfig>(config);
   const [savingConfig, setSavingConfig] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
+  const [logoModalSide, setLogoModalSide] = useState<'left' | 'right' | null>(null);
 
   // Local inline edits per row ID so typing is zero-lag before saving on blur
   const [localRows, setLocalRows] = useState<Record<string, SamplePertinggalRow>>({});
-  const logoInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setDraftConfig({
@@ -84,32 +87,36 @@ export const SamplePertinggalView: React.FC<SamplePertinggalViewProps> = ({
     ...(draftConfig.colLabels || {}),
   };
 
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result !== 'string') return;
-      // Resize logo down to max 180x180 PNG/JPEG for fast storage & crisp PDF
-      const img = new Image();
-      img.onload = () => {
-        const maxDim = 180;
-        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-        const cw = Math.max(1, Math.round(img.width * scale));
-        const ch = Math.max(1, Math.round(img.height * scale));
-        const canvas = document.createElement('canvas');
-        canvas.width = cw;
-        canvas.height = ch;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.drawImage(img, 0, 0, cw, ch);
-        const compressed = canvas.toDataURL('image/png');
-        setDraftConfig((prev) => ({ ...prev, logoDataUrl: compressed }));
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
+  const draftLogos = resolveDocumentLogos(profile, 'sampel', draftConfig);
+  const displayLogos = resolveDocumentLogos(profile, 'sampel', config);
+
+  const handleApplyLogoModal = async ({
+    dataUrl,
+    widthPx,
+    syncAsGlobalBgn,
+  }: {
+    dataUrl: string;
+    widthPx: number;
+    syncAsGlobalBgn?: boolean;
+  }) => {
+    if (logoModalSide === 'left') {
+      if (syncAsGlobalBgn && onSyncGlobalLeftLogo) {
+        await onSyncGlobalLeftLogo(dataUrl, widthPx);
+      }
+      setDraftConfig((prev) => ({
+        ...prev,
+        logoDataUrl: dataUrl,
+        logoWidthPx: widthPx,
+        followGlobalLeftLogo: syncAsGlobalBgn ? true : false,
+      }));
+    } else if (logoModalSide === 'right') {
+      setDraftConfig((prev) => ({
+        ...prev,
+        logoRightDataUrl: dataUrl,
+        logoRightWidthPx: widthPx,
+        followGlobalRightLogo: false,
+      }));
+    }
   };
 
   const handleSaveFormatSubmit = async (e: React.FormEvent) => {
@@ -119,6 +126,11 @@ export const SamplePertinggalView: React.FC<SamplePertinggalViewProps> = ({
     try {
       await onSaveConfig({
         logoDataUrl: draftConfig.logoDataUrl || '',
+        logoWidthPx: draftConfig.logoWidthPx || 56,
+        logoRightDataUrl: draftConfig.logoRightDataUrl || '',
+        logoRightWidthPx: draftConfig.logoRightWidthPx || 56,
+        followGlobalLeftLogo: draftConfig.followGlobalLeftLogo !== false,
+        followGlobalRightLogo: draftConfig.followGlobalRightLogo !== false,
         logoCaption: draftConfig.logoCaption,
         unitName: draftConfig.unitName,
         formLabel: draftConfig.formLabel,
@@ -316,45 +328,70 @@ export const SamplePertinggalView: React.FC<SamplePertinggalViewProps> = ({
           {/* 1. Header & Logo */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 space-y-2.5">
-              <div className="text-xs font-semibold text-slate-800">Logo & Keterangan Kiri</div>
-              <input
-                ref={logoInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleLogoUpload}
-                className="hidden"
-              />
-              <div className="flex items-center gap-3">
-                {draftConfig.logoDataUrl ? (
+              <div className="text-xs font-semibold text-slate-800">Logo Kiri (BGN) &amp; Kanan</div>
+              <div className="flex flex-wrap items-center gap-2">
+                {draftLogos.leftUrl ? (
                   <img
-                    src={draftConfig.logoDataUrl}
-                    alt="Logo form"
-                    className="h-12 w-12 rounded border border-slate-300 bg-white object-contain p-0.5"
+                    src={draftLogos.leftUrl}
+                    alt="Logo Kiri"
+                    style={{ width: `${Math.min(64, draftLogos.leftWidthPx)}px` }}
+                    className="h-12 rounded border border-slate-300 bg-white object-contain p-0.5"
                   />
                 ) : (
                   <div className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-slate-400 bg-white text-[10px] font-bold text-slate-600">
-                    LOGO
+                    BGN
                   </div>
                 )}
-                <div className="flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => logoInputRef.current?.click()}
-                    className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
-                  >
-                    <Upload className="h-3 w-3" />
-                    Unggah Logo
-                  </button>
-                  {draftConfig.logoDataUrl && (
-                    <button
-                      type="button"
-                      onClick={() => setDraftConfig((p) => ({ ...p, logoDataUrl: '' }))}
-                      className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
+                {draftLogos.rightUrl && (
+                  <img
+                    src={draftLogos.rightUrl}
+                    alt="Logo Kanan"
+                    style={{ width: `${Math.min(64, draftLogos.rightWidthPx)}px` }}
+                    className="h-12 rounded border border-slate-300 bg-white object-contain p-0.5"
+                  />
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setLogoModalSide('left')}
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
+                >
+                  <Upload className="h-3 w-3 text-emerald-600" />
+                  Atur Kiri ({draftLogos.leftWidthPx}px)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLogoModalSide('right')}
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
+                >
+                  <Upload className="h-3 w-3 text-blue-600" />
+                  Atur Kanan ({draftLogos.rightWidthPx}px)
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-3 text-[11px] text-slate-600">
+                <label className="inline-flex items-center gap-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={draftConfig.followGlobalLeftLogo !== false}
+                    onChange={(e) =>
+                      setDraftConfig((p) => ({ ...p, followGlobalLeftLogo: e.target.checked }))
+                    }
+                    className="rounded accent-emerald-600"
+                  />
+                  Ikuti BGN Global
+                </label>
+                <label className="inline-flex items-center gap-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={draftConfig.followGlobalRightLogo !== false}
+                    onChange={(e) =>
+                      setDraftConfig((p) => ({ ...p, followGlobalRightLogo: e.target.checked }))
+                    }
+                    className="rounded accent-blue-600"
+                  />
+                  Ikuti Kanan Global
+                </label>
               </div>
               <div>
                 <label className="block text-[11px] font-medium text-slate-600 mb-1">
@@ -603,16 +640,18 @@ export const SamplePertinggalView: React.FC<SamplePertinggalViewProps> = ({
                     className="w-[140px] border-r border-slate-500 p-2 text-center align-middle"
                   >
                     <div className="flex flex-col items-center justify-center gap-1">
-                      {config.logoDataUrl ? (
+                      {displayLogos.leftUrl ? (
                         <img
-                          src={config.logoDataUrl}
+                          src={displayLogos.leftUrl}
                           alt={config.logoCaption}
-                          className="h-14 w-14 object-contain"
+                          style={{ width: `${displayLogos.leftWidthPx}px`, height: 'auto', maxHeight: '72px' }}
+                          className="object-contain"
                         />
                       ) : (
                         <svg
                           viewBox="0 0 64 64"
-                          className="h-14 w-14 text-slate-700"
+                          style={{ width: `${displayLogos.leftWidthPx}px`, height: `${displayLogos.leftWidthPx}px`, maxHeight: '72px' }}
+                          className="text-slate-700"
                           aria-hidden="true"
                         >
                           <circle
@@ -658,6 +697,19 @@ export const SamplePertinggalView: React.FC<SamplePertinggalViewProps> = ({
                       <span>{config.docNumber}</span>
                     </div>
                   </td>
+                  {displayLogos.rightUrl && (
+                    <td
+                      rowSpan={3}
+                      className="w-[115px] border-l border-slate-500 p-2 text-center align-middle"
+                    >
+                      <img
+                        src={displayLogos.rightUrl}
+                        alt="Logo Kanan"
+                        style={{ width: `${displayLogos.rightWidthPx}px`, height: 'auto', maxHeight: '72px' }}
+                        className="mx-auto object-contain"
+                      />
+                    </td>
+                  )}
                 </tr>
                 <tr>
                   <td className="border-r border-b border-slate-500 px-3 py-1.5 text-center text-[13px] font-serif">
@@ -914,6 +966,26 @@ export const SamplePertinggalView: React.FC<SamplePertinggalViewProps> = ({
           </div>
         </div>
       </div>
+
+      <LogoUploadModal
+        open={logoModalSide !== null}
+        title={
+          logoModalSide === 'left'
+            ? 'Atur Logo Kiri (BGN) — Form Sampel Pertinggal'
+            : 'Atur Logo Kanan — Form Sampel Pertinggal'
+        }
+        side={logoModalSide || 'left'}
+        initialDataUrl={logoModalSide === 'left' ? draftLogos.leftUrl : draftLogos.rightUrl}
+        initialWidthPx={
+          logoModalSide === 'left' ? draftLogos.leftWidthPx : draftLogos.rightWidthPx
+        }
+        headerLine1={draftConfig.unitName || profile.namaSppg}
+        headerLine2={draftConfig.formLabel}
+        headerLine3={draftConfig.formTitle}
+        allowSyncGlobal={Boolean(onSyncGlobalLeftLogo)}
+        onClose={() => setLogoModalSide(null)}
+        onApply={handleApplyLogoModal}
+      />
     </div>
   );
 };

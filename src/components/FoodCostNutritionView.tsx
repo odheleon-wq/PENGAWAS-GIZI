@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  Sparkles,
   Trash2,
   Upload,
   X,
@@ -28,6 +29,7 @@ import type {
   FoodCostPortionScope,
   FoodCostPurchaseUnit,
   FoodCostWorksheet,
+  MasterMenuPlan,
   NutritionValues,
   SppgUserProfile,
   TargetCategoryId,
@@ -42,7 +44,14 @@ import {
   getWorksheetDefaultTitle,
   getWorksheetSideLabelDefault,
 } from '../utils/foodCostCalculator';
+import { resolveDocumentLogos } from '../utils/logoResolver';
+import {
+  buildFoodCostRowsFromMasterDay,
+  findMatchingMasterMenuForDate,
+  formatMasterMenuDayAsMenuString,
+} from '../utils/masterMenuHelper';
 import { mergeTkpiCatalog } from '../utils/tkpiCsvParser';
+import { LogoUploadModal } from './LogoUploadModal';
 
 interface FoodCostNutritionViewProps {
   uid: string;
@@ -51,6 +60,7 @@ interface FoodCostNutritionViewProps {
   entries: DailyMenuEntry[];
   pmRecords: DailyPmRecord[];
   foodCostPlans: FoodCostDayPlan[];
+  masterMenus?: MasterMenuPlan[];
   tkpiSyncConfig: TkpiSyncConfig | null;
   activeDateIso: string;
   onChangeDateIso: (dateIso: string) => void;
@@ -61,6 +71,7 @@ interface FoodCostNutritionViewProps {
     entryId: string,
     nutritionByCategory: Partial<Record<TargetCategoryId, NutritionValues>>
   ) => Promise<void>;
+  onSyncGlobalLeftLogo?: (dataUrl: string, widthPx: number) => Promise<void>;
   onOpenTkpiModal: () => void;
   onExportPdf: (
     plan: FoodCostDayPlan,
@@ -86,11 +97,13 @@ export const FoodCostNutritionView: React.FC<FoodCostNutritionViewProps> = ({
   entries,
   pmRecords,
   foodCostPlans,
+  masterMenus = [],
   tkpiSyncConfig,
   activeDateIso,
   onChangeDateIso,
   onSaveDayPlan,
   onSyncNutritionToEntry,
+  onSyncGlobalLeftLogo,
   onOpenTkpiModal,
   onExportPdf,
 }) => {
@@ -98,6 +111,8 @@ export const FoodCostNutritionView: React.FC<FoodCostNutritionViewProps> = ({
   const [showHeaderEdit, setShowHeaderEdit] = useState(false);
   const [showAddSheetModal, setShowAddSheetModal] = useState(false);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const [logoModalSide, setLogoModalSide] = useState<'left' | 'right' | null>(null);
+  const autoLoadedMasterRef = useRef<Set<string>>(new Set());
 
   // New Worksheet Modal State
   const [newSheetCategories, setNewSheetCategories] = useState<TargetCategoryId[]>(['tk_paud_lb']);
@@ -193,6 +208,42 @@ export const FoodCostNutritionView: React.FC<FoodCostNutritionViewProps> = ({
     return others[others.length - 1] || null;
   }, [foodCostPlans, activeDateIso]);
 
+  const resolvedLogos = useMemo(
+    () => resolveDocumentLogos(profile, 'foodcost', draft),
+    [profile, draft]
+  );
+
+  const matchedMaster = useMemo(
+    () => findMatchingMasterMenuForDate(masterMenus, activeDateIso, activeWorksheet?.categoryIds),
+    [masterMenus, activeDateIso, activeWorksheet?.categoryIds]
+  );
+
+  const matchedMasterSummary = useMemo(() => {
+    if (!matchedMaster) return '';
+    return formatMasterMenuDayAsMenuString(matchedMaster.day);
+  }, [matchedMaster]);
+
+  // Auto-populate empty worksheet rows from Master Menu when opening a planned date
+  useEffect(() => {
+    if (!activeWorksheet || !matchedMaster || !matchedMasterSummary) return;
+    if (activeWorksheet.rows.length > 0) return;
+    const key = `${activeDateIso}_${activeWorksheet.id}_${matchedMaster.plan.id}`;
+    if (autoLoadedMasterRef.current.has(key)) return;
+    autoLoadedMasterRef.current.add(key);
+
+    const generatedRows = buildFoodCostRowsFromMasterDay(matchedMaster.day, tkpiCatalog);
+    if (generatedRows.length === 0) return;
+
+    setDraft((prev) => ({
+      ...prev,
+      worksheets: prev.worksheets.map((ws) =>
+        ws.id === activeWorksheet.id && ws.rows.length === 0
+          ? { ...ws, rows: generatedRows }
+          : ws
+      ),
+    }));
+  }, [activeWorksheet, matchedMaster, matchedMasterSummary, activeDateIso, tkpiCatalog]);
+
   const persistPlan = async (next: FoodCostDayPlan) => {
     setDraft(next);
     setSaving(true);
@@ -205,11 +256,33 @@ export const FoodCostNutritionView: React.FC<FoodCostNutritionViewProps> = ({
         headerLine3: next.headerLine3,
         headerAlamat: next.headerAlamat,
         logoDataUrl: next.logoDataUrl,
+        logoWidthPx: next.logoWidthPx,
+        logoRightDataUrl: next.logoRightDataUrl,
+        logoRightWidthPx: next.logoRightWidthPx,
+        followGlobalLeftLogo: next.followGlobalLeftLogo,
+        followGlobalRightLogo: next.followGlobalRightLogo,
         worksheets: next.worksheets,
       });
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleLoadFromMasterMenu = () => {
+    if (!activeWorksheet || !matchedMaster || !matchedMasterSummary) return;
+    const generatedRows = buildFoodCostRowsFromMasterDay(matchedMaster.day, tkpiCatalog);
+    if (generatedRows.length === 0) return;
+    const nextPlan: FoodCostDayPlan = {
+      ...draft,
+      worksheets: draft.worksheets.map((ws) =>
+        ws.id === activeWorksheet.id ? { ...ws, rows: generatedRows } : ws
+      ),
+    };
+    void persistPlan(nextPlan);
+    setSyncNotice(
+      `Menu hari ${formatIndonesianFullDate(activeDateIso)} dimuat otomatis dari "${matchedMaster.plan.title}" (${generatedRows.length} bahan TKPI 2020).`
+    );
+    setTimeout(() => setSyncNotice(null), 5000);
   };
 
   const updateActiveWorksheet = (
@@ -429,17 +502,33 @@ export const FoodCostNutritionView: React.FC<FoodCostNutritionViewProps> = ({
     setTimeout(() => setSyncNotice(null), 5000);
   };
 
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        void persistPlan({ ...draft, logoDataUrl: reader.result });
+  const handleApplyLogoModal = async ({
+    dataUrl,
+    widthPx,
+    syncAsGlobalBgn,
+  }: {
+    dataUrl: string;
+    widthPx: number;
+    syncAsGlobalBgn?: boolean;
+  }) => {
+    if (logoModalSide === 'left') {
+      if (syncAsGlobalBgn && onSyncGlobalLeftLogo) {
+        await onSyncGlobalLeftLogo(dataUrl, widthPx);
       }
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
+      await persistPlan({
+        ...draft,
+        logoDataUrl: dataUrl,
+        logoWidthPx: widthPx,
+        followGlobalLeftLogo: syncAsGlobalBgn ? true : false,
+      });
+    } else if (logoModalSide === 'right') {
+      await persistPlan({
+        ...draft,
+        logoRightDataUrl: dataUrl,
+        logoRightWidthPx: widthPx,
+        followGlobalRightLogo: false,
+      });
+    }
   };
 
   const getNeedBadgeStyle = (pct: number): React.CSSProperties => {
@@ -561,6 +650,28 @@ export const FoodCostNutritionView: React.FC<FoodCostNutritionViewProps> = ({
           </div>
         )}
 
+        {matchedMaster && matchedMasterSummary && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-950">
+            <div className="flex items-start gap-2">
+              <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
+              <div>
+                <span className="font-semibold">
+                  Master Menu Terdeteksi ({matchedMaster.plan.title} · Menu {matchedMaster.day.menuNumber}):
+                </span>{' '}
+                <span className="text-emerald-900">{matchedMasterSummary}</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleLoadFromMasterMenu}
+              className="inline-flex items-center gap-1 rounded-md border border-emerald-600 bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-600 hover:text-white transition-colors"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Muat ke Lembar Ini
+            </button>
+          </div>
+        )}
+
         {/* Worksheet Tabs + Add Category/Allergy Buttons */}
         <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
           {draft.worksheets.map((ws) => {
@@ -658,18 +769,50 @@ export const FoodCostNutritionView: React.FC<FoodCostNutritionViewProps> = ({
               </div>
               <div>
                 <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                  Logo BGN / SPPG
+                  Pengaturan Logo Kiri &amp; Kanan
                 </label>
-                <label className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
-                  <Upload className="h-3.5 w-3.5 text-emerald-600" />
-                  Unggah Logo
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleLogoUpload}
-                    className="hidden"
-                  />
-                </label>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setLogoModalSide('left')}
+                    className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    <Upload className="h-3 w-3 text-emerald-600" />
+                    Logo Kiri ({resolvedLogos.leftWidthPx}px)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLogoModalSide('right')}
+                    className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    <Upload className="h-3 w-3 text-blue-600" />
+                    Logo Kanan ({resolvedLogos.rightWidthPx}px)
+                  </button>
+                </div>
+                <div className="mt-1.5 flex flex-wrap gap-3 text-[11px] text-slate-600">
+                  <label className="inline-flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={draft.followGlobalLeftLogo !== false}
+                      onChange={(e) =>
+                        void persistPlan({ ...draft, followGlobalLeftLogo: e.target.checked })
+                      }
+                      className="rounded accent-emerald-600"
+                    />
+                    Ikuti BGN Global
+                  </label>
+                  <label className="inline-flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={draft.followGlobalRightLogo !== false}
+                      onChange={(e) =>
+                        void persistPlan({ ...draft, followGlobalRightLogo: e.target.checked })
+                      }
+                      className="rounded accent-blue-600"
+                    />
+                    Ikuti Kanan Global
+                  </label>
+                </div>
               </div>
             </div>
 
@@ -844,20 +987,31 @@ export const FoodCostNutritionView: React.FC<FoodCostNutritionViewProps> = ({
 
           <div className="flex-1 min-w-0">
             {/* Kop */}
-            <div className="relative border-b border-black px-4 py-3 text-center">
-              {draft.logoDataUrl && (
+            <div className="relative border-b border-black px-4 py-3 text-center min-h-[82px] flex flex-col justify-center">
+              {resolvedLogos.leftUrl && (
                 <img
-                  src={draft.logoDataUrl}
-                  alt="Logo"
-                  className="absolute left-3 top-2.5 h-12 w-12 object-contain"
+                  src={resolvedLogos.leftUrl}
+                  alt="Logo Kiri"
+                  style={{ width: `${resolvedLogos.leftWidthPx}px`, height: 'auto', maxHeight: '76px' }}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 object-contain"
                 />
               )}
-              <div className="text-xs font-bold uppercase text-black">{draft.headerLine1}</div>
-              <div className="text-xs font-bold uppercase text-black">{draft.headerLine2}</div>
-              <div className="text-xs font-bold uppercase text-black">{draft.headerLine3}</div>
-              <div className="text-[11px] italic underline text-black">{draft.headerAlamat}</div>
-              <div className="mt-2 text-sm font-extrabold uppercase text-black">
-                {activeWorksheet.title}
+              {resolvedLogos.rightUrl && (
+                <img
+                  src={resolvedLogos.rightUrl}
+                  alt="Logo Kanan"
+                  style={{ width: `${resolvedLogos.rightWidthPx}px`, height: 'auto', maxHeight: '76px' }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 object-contain"
+                />
+              )}
+              <div className="px-20">
+                <div className="text-xs font-bold uppercase text-black">{draft.headerLine1}</div>
+                <div className="text-xs font-bold uppercase text-black">{draft.headerLine2}</div>
+                <div className="text-xs font-bold uppercase text-black">{draft.headerLine3}</div>
+                <div className="text-[11px] italic underline text-black">{draft.headerAlamat}</div>
+                <div className="mt-2 text-sm font-extrabold uppercase text-black">
+                  {activeWorksheet.title}
+                </div>
               </div>
             </div>
 
@@ -1700,6 +1854,28 @@ export const FoodCostNutritionView: React.FC<FoodCostNutritionViewProps> = ({
           </form>
         </div>
       )}
+
+      <LogoUploadModal
+        open={logoModalSide !== null}
+        title={
+          logoModalSide === 'left'
+            ? 'Atur Logo Kiri (BGN) — Nilai Gizi & Food Cost'
+            : 'Atur Logo Kanan — Nilai Gizi & Food Cost'
+        }
+        side={logoModalSide || 'left'}
+        initialDataUrl={
+          logoModalSide === 'left' ? resolvedLogos.leftUrl : resolvedLogos.rightUrl
+        }
+        initialWidthPx={
+          logoModalSide === 'left' ? resolvedLogos.leftWidthPx : resolvedLogos.rightWidthPx
+        }
+        headerLine1={draft.headerLine1}
+        headerLine2={draft.headerLine2}
+        headerLine3={draft.headerLine3}
+        allowSyncGlobal={Boolean(onSyncGlobalLeftLogo)}
+        onClose={() => setLogoModalSide(null)}
+        onApply={handleApplyLogoModal}
+      />
     </div>
   );
 };

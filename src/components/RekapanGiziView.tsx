@@ -17,6 +17,7 @@ import {
   getPeriodeLabel,
   parseMonthKey,
 } from '../utils/dateUtils';
+import { resolveDocumentLogos } from '../utils/logoResolver';
 
 interface RekapanGiziViewProps {
   profile: SppgUserProfile;
@@ -126,6 +127,7 @@ export const RekapanGiziView: React.FC<RekapanGiziViewProps> = ({
   };
 
   const fmt1 = (n: number) => n.toFixed(1);
+  const resolvedLogos = useMemo(() => resolveDocumentLogos(profile, 'gizi'), [profile]);
   const metaRows: Array<[string, string]> = [
     ['Nama SPPG', profile.namaSppg || 'Belum diisi'],
     ['ID SPPG', profile.idSppg || 'Belum diisi'],
@@ -402,6 +404,36 @@ export const RekapanGiziView: React.FC<RekapanGiziViewProps> = ({
       <div className="rounded-xl border border-slate-200 bg-white shadow-xs overflow-hidden">
         <div className="overflow-x-auto p-4 sm:p-6">
           <div className="min-w-[960px] border border-black bg-white text-black">
+            {(resolvedLogos.leftUrl || resolvedLogos.rightUrl) && (
+              <div className="relative border-b border-black bg-white px-4 py-2.5 text-center min-h-[72px] flex flex-col justify-center">
+                {resolvedLogos.leftUrl && (
+                  <img
+                    src={resolvedLogos.leftUrl}
+                    alt="Logo Kiri"
+                    style={{ width: `${resolvedLogos.leftWidthPx}px`, height: 'auto', maxHeight: '68px' }}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 object-contain"
+                  />
+                )}
+                {resolvedLogos.rightUrl && (
+                  <img
+                    src={resolvedLogos.rightUrl}
+                    alt="Logo Kanan"
+                    style={{ width: `${resolvedLogos.rightWidthPx}px`, height: 'auto', maxHeight: '68px' }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 object-contain"
+                  />
+                )}
+                <div className="px-20">
+                  <div className="text-[11px] font-bold uppercase text-black">BADAN GIZI NASIONAL</div>
+                  <div className="text-[11px] font-bold uppercase text-black">
+                    SATUAN PELAYANAN PEMENUHAN GIZI
+                  </div>
+                  <div className="text-[11px] font-bold uppercase text-black">
+                    {profile.namaSppg || 'SPPG'}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Green Banner */}
             <div
               style={{ backgroundColor: '#00B050' }}

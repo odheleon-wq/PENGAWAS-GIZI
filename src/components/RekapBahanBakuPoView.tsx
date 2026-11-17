@@ -21,6 +21,8 @@ import {
   computePmSummary,
   computeRawMaterialRecap,
 } from '../utils/foodCostCalculator';
+import { resolveDocumentLogos } from '../utils/logoResolver';
+import { LogoUploadModal } from './LogoUploadModal';
 
 interface RekapBahanBakuPoViewProps {
   uid: string;
@@ -31,10 +33,12 @@ interface RekapBahanBakuPoViewProps {
   foodCostPlans: FoodCostDayPlan[];
   poRecaps: RawMaterialRecapDayConfig[];
   activeDateIso: string;
+  initialSubTab?: 'rekap' | 'po' | 'both';
   onChangeDateIso: (dateIso: string) => void;
   onSaveRecapConfig: (
     cfg: Omit<RawMaterialRecapDayConfig, 'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
   ) => Promise<void>;
+  onSyncGlobalLeftLogo?: (dataUrl: string, widthPx: number) => Promise<void>;
   onExportPdf: (
     recapConfig: RawMaterialRecapDayConfig,
     foodCostPlan: FoodCostDayPlan | null,
@@ -62,13 +66,22 @@ export const RekapBahanBakuPoView: React.FC<RekapBahanBakuPoViewProps> = ({
   foodCostPlans,
   poRecaps,
   activeDateIso,
+  initialSubTab,
   onChangeDateIso,
   onSaveRecapConfig,
+  onSyncGlobalLeftLogo,
   onExportPdf,
 }) => {
-  const [subTab, setSubTab] = useState<'rekap' | 'po' | 'both'>('rekap');
+  const [subTab, setSubTab] = useState<'rekap' | 'po' | 'both'>(initialSubTab || 'rekap');
   const [showHeaderEdit, setShowHeaderEdit] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [logoModalSide, setLogoModalSide] = useState<'left' | 'right' | null>(null);
+
+  useEffect(() => {
+    if (initialSubTab) {
+      setSubTab(initialSubTab);
+    }
+  }, [initialSubTab]);
 
   const matchedEntry = useMemo(
     () => entries.find((e) => e.dateIso === activeDateIso) || null,
@@ -121,6 +134,18 @@ export const RekapBahanBakuPoView: React.FC<RekapBahanBakuPoViewProps> = ({
     [activeFoodCostPlan, pmSummary, draft]
   );
 
+  const resolvedRekapLogos = useMemo(
+    () => resolveDocumentLogos(profile, 'rekap_bahan', draft),
+    [profile, draft]
+  );
+
+  const resolvedPoLogos = useMemo(
+    () => resolveDocumentLogos(profile, 'po_bahan', draft),
+    [profile, draft]
+  );
+
+  const activeLogos = subTab === 'po' ? resolvedPoLogos : resolvedRekapLogos;
+
   const persistConfig = async (next: RawMaterialRecapDayConfig) => {
     setDraft(next);
     setSaving(true);
@@ -133,6 +158,11 @@ export const RekapBahanBakuPoView: React.FC<RekapBahanBakuPoViewProps> = ({
         headerLine3: next.headerLine3,
         headerAlamat: next.headerAlamat,
         logoDataUrl: next.logoDataUrl,
+        logoWidthPx: next.logoWidthPx,
+        logoRightDataUrl: next.logoRightDataUrl,
+        logoRightWidthPx: next.logoRightWidthPx,
+        followGlobalLeftLogo: next.followGlobalLeftLogo,
+        followGlobalRightLogo: next.followGlobalRightLogo,
         recapTitle: next.recapTitle,
         sideLabel: next.sideLabel,
         bufferPercent: next.bufferPercent,
@@ -174,17 +204,33 @@ export const RekapBahanBakuPoView: React.FC<RekapBahanBakuPoViewProps> = ({
     void persistConfig({ ...draft, itemOverrides: nextOverrides });
   };
 
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        void persistConfig({ ...draft, logoDataUrl: reader.result });
+  const handleApplyLogoModal = async ({
+    dataUrl,
+    widthPx,
+    syncAsGlobalBgn,
+  }: {
+    dataUrl: string;
+    widthPx: number;
+    syncAsGlobalBgn?: boolean;
+  }) => {
+    if (logoModalSide === 'left') {
+      if (syncAsGlobalBgn && onSyncGlobalLeftLogo) {
+        await onSyncGlobalLeftLogo(dataUrl, widthPx);
       }
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
+      await persistConfig({
+        ...draft,
+        logoDataUrl: dataUrl,
+        logoWidthPx: widthPx,
+        followGlobalLeftLogo: syncAsGlobalBgn ? true : false,
+      });
+    } else if (logoModalSide === 'right') {
+      await persistConfig({
+        ...draft,
+        logoRightDataUrl: dataUrl,
+        logoRightWidthPx: widthPx,
+        followGlobalRightLogo: false,
+      });
+    }
   };
 
   const dateChoices = useMemo(() => {
@@ -388,18 +434,50 @@ export const RekapBahanBakuPoView: React.FC<RekapBahanBakuPoViewProps> = ({
             </div>
             <div>
               <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                Logo BGN / SPPG
+                Pengaturan Logo Kiri &amp; Kanan
               </label>
-              <label className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50">
-                <Upload className="h-3.5 w-3.5 text-emerald-600" />
-                Unggah Logo
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleLogoUpload}
-                  className="hidden"
-                />
-              </label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setLogoModalSide('left')}
+                  className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  <Upload className="h-3 w-3 text-emerald-600" />
+                  Kiri ({activeLogos.leftWidthPx}px)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLogoModalSide('right')}
+                  className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  <Upload className="h-3 w-3 text-blue-600" />
+                  Kanan ({activeLogos.rightWidthPx}px)
+                </button>
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-3 text-[11px] text-slate-600">
+                <label className="inline-flex items-center gap-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={draft.followGlobalLeftLogo !== false}
+                    onChange={(e) =>
+                      void persistConfig({ ...draft, followGlobalLeftLogo: e.target.checked })
+                    }
+                    className="rounded accent-emerald-600"
+                  />
+                  Ikuti BGN Global
+                </label>
+                <label className="inline-flex items-center gap-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={draft.followGlobalRightLogo !== false}
+                    onChange={(e) =>
+                      void persistConfig({ ...draft, followGlobalRightLogo: e.target.checked })
+                    }
+                    className="rounded accent-blue-600"
+                  />
+                  Ikuti Kanan Global
+                </label>
+              </div>
             </div>
             <div>
               <label className="block text-[11px] font-medium text-slate-600 mb-1">
@@ -466,20 +544,31 @@ export const RekapBahanBakuPoView: React.FC<RekapBahanBakuPoViewProps> = ({
 
           <div className="flex-1 min-w-0">
             {/* Kop */}
-            <div className="relative border-b border-black px-4 py-3 text-center">
-              {draft.logoDataUrl && (
+            <div className="relative border-b border-black px-4 py-3 text-center min-h-[82px] flex flex-col justify-center">
+              {resolvedRekapLogos.leftUrl && (
                 <img
-                  src={draft.logoDataUrl}
-                  alt="Logo"
-                  className="absolute left-3 top-2.5 h-12 w-12 object-contain"
+                  src={resolvedRekapLogos.leftUrl}
+                  alt="Logo Kiri"
+                  style={{ width: `${resolvedRekapLogos.leftWidthPx}px`, height: 'auto', maxHeight: '76px' }}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 object-contain"
                 />
               )}
-              <div className="text-xs font-bold uppercase text-black">{draft.headerLine1}</div>
-              <div className="text-xs font-bold uppercase text-black">{draft.headerLine2}</div>
-              <div className="text-xs font-bold uppercase text-black">{draft.headerLine3}</div>
-              <div className="text-[11px] italic underline text-black">{draft.headerAlamat}</div>
-              <div className="mt-2 text-sm font-extrabold uppercase text-black">
-                {draft.recapTitle}
+              {resolvedRekapLogos.rightUrl && (
+                <img
+                  src={resolvedRekapLogos.rightUrl}
+                  alt="Logo Kanan"
+                  style={{ width: `${resolvedRekapLogos.rightWidthPx}px`, height: 'auto', maxHeight: '76px' }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 object-contain"
+                />
+              )}
+              <div className="px-20">
+                <div className="text-xs font-bold uppercase text-black">{draft.headerLine1}</div>
+                <div className="text-xs font-bold uppercase text-black">{draft.headerLine2}</div>
+                <div className="text-xs font-bold uppercase text-black">{draft.headerLine3}</div>
+                <div className="text-[11px] italic underline text-black">{draft.headerAlamat}</div>
+                <div className="mt-2 text-sm font-extrabold uppercase text-black">
+                  {draft.recapTitle}
+                </div>
               </div>
             </div>
 
@@ -767,18 +856,29 @@ export const RekapBahanBakuPoView: React.FC<RekapBahanBakuPoViewProps> = ({
           </div>
 
           {/* Kop */}
-          <div className="relative border-b border-slate-300 px-5 py-3 text-center">
-            {draft.logoDataUrl && (
+          <div className="relative border-b border-slate-300 px-5 py-3 text-center min-h-[82px] flex flex-col justify-center">
+            {resolvedPoLogos.leftUrl && (
               <img
-                src={draft.logoDataUrl}
-                alt="Logo"
-                className="absolute left-5 top-3 h-14 w-14 object-contain"
+                src={resolvedPoLogos.leftUrl}
+                alt="Logo Kiri"
+                style={{ width: `${resolvedPoLogos.leftWidthPx}px`, height: 'auto', maxHeight: '76px' }}
+                className="absolute left-5 top-1/2 -translate-y-1/2 object-contain"
               />
             )}
-            <div className="text-xs font-bold uppercase text-black">{draft.headerLine1}</div>
-            <div className="text-xs font-bold uppercase text-black">{draft.headerLine2}</div>
-            <div className="text-xs font-bold uppercase text-black">{draft.headerLine3}</div>
-            <div className="text-[11px] italic underline text-black">{draft.headerAlamat}</div>
+            {resolvedPoLogos.rightUrl && (
+              <img
+                src={resolvedPoLogos.rightUrl}
+                alt="Logo Kanan"
+                style={{ width: `${resolvedPoLogos.rightWidthPx}px`, height: 'auto', maxHeight: '76px' }}
+                className="absolute right-5 top-1/2 -translate-y-1/2 object-contain"
+              />
+            )}
+            <div className="px-20">
+              <div className="text-xs font-bold uppercase text-black">{draft.headerLine1}</div>
+              <div className="text-xs font-bold uppercase text-black">{draft.headerLine2}</div>
+              <div className="text-xs font-bold uppercase text-black">{draft.headerLine3}</div>
+              <div className="text-[11px] italic underline text-black">{draft.headerAlamat}</div>
+            </div>
           </div>
 
           {/* Dari / Kepada / Alamat / Tanggal */}
@@ -919,6 +1019,28 @@ export const RekapBahanBakuPoView: React.FC<RekapBahanBakuPoViewProps> = ({
           </div>
         </div>
       )}
+
+      <LogoUploadModal
+        open={logoModalSide !== null}
+        title={
+          logoModalSide === 'left'
+            ? 'Atur Logo Kiri (BGN) — Rekapan Bahan Baku & PO'
+            : 'Atur Logo Kanan — Rekapan Bahan Baku & PO'
+        }
+        side={logoModalSide || 'left'}
+        initialDataUrl={
+          logoModalSide === 'left' ? activeLogos.leftUrl : activeLogos.rightUrl
+        }
+        initialWidthPx={
+          logoModalSide === 'left' ? activeLogos.leftWidthPx : activeLogos.rightWidthPx
+        }
+        headerLine1={draft.headerLine1}
+        headerLine2={draft.headerLine2}
+        headerLine3={draft.headerLine3}
+        allowSyncGlobal={Boolean(onSyncGlobalLeftLogo)}
+        onClose={() => setLogoModalSide(null)}
+        onApply={handleApplyLogoModal}
+      />
     </div>
   );
 };

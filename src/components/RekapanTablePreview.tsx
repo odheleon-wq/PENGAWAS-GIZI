@@ -2,6 +2,7 @@ import React from 'react';
 import { CalendarPlus, Edit3, ImagePlus, Trash2 } from 'lucide-react';
 import type { DailyMenuEntry, SppgUserProfile } from '../types';
 import { formatIndonesianFullDate, getPeriodeLabel, parseMonthKey } from '../utils/dateUtils';
+import { resolveDocumentLogos } from '../utils/logoResolver';
 
 interface RekapanTablePreviewProps {
   profile: SppgUserProfile;
@@ -24,6 +25,7 @@ export const RekapanTablePreview: React.FC<RekapanTablePreviewProps> = ({
 }) => {
   const { year, month } = parseMonthKey(monthKey);
   const periodeText = getPeriodeLabel(year, month, includeYearInPeriod);
+  const resolvedLogos = resolveDocumentLogos(profile, 'rekapan');
   const sortedEntries = [...entries].sort(
     (a, b) => a.hariKe - b.hariKe || a.dateIso.localeCompare(b.dateIso)
   );
@@ -43,6 +45,36 @@ export const RekapanTablePreview: React.FC<RekapanTablePreviewProps> = ({
     <div className="rounded-xl border border-slate-200 bg-white shadow-xs overflow-hidden">
       <div className="overflow-x-auto p-4 sm:p-6">
         <div className="min-w-[940px] border border-black bg-white text-black">
+          {(resolvedLogos.leftUrl || resolvedLogos.rightUrl) && (
+            <div className="relative border-b border-black bg-white px-4 py-2.5 text-center min-h-[72px] flex flex-col justify-center">
+              {resolvedLogos.leftUrl && (
+                <img
+                  src={resolvedLogos.leftUrl}
+                  alt="Logo Kiri"
+                  style={{ width: `${resolvedLogos.leftWidthPx}px`, height: 'auto', maxHeight: '68px' }}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 object-contain"
+                />
+              )}
+              {resolvedLogos.rightUrl && (
+                <img
+                  src={resolvedLogos.rightUrl}
+                  alt="Logo Kanan"
+                  style={{ width: `${resolvedLogos.rightWidthPx}px`, height: 'auto', maxHeight: '68px' }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 object-contain"
+                />
+              )}
+              <div className="px-20">
+                <div className="text-[11px] font-bold uppercase text-black">BADAN GIZI NASIONAL</div>
+                <div className="text-[11px] font-bold uppercase text-black">
+                  SATUAN PELAYANAN PEMENUHAN GIZI
+                </div>
+                <div className="text-[11px] font-bold uppercase text-black">
+                  {profile.namaSppg || 'SPPG'}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Top Vibrant Green Header Banner (#00B050) */}
           <div
             style={{ backgroundColor: '#00B050' }}

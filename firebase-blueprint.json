@@ -60,6 +60,10 @@
           "description": "Nomor handphone aktif penanggung jawab.",
           "maxLength": 30
         },
+        "logoSettings": {
+          "type": "object",
+          "description": "Konfigurasi global logo kiri (BGN) dan logo kanan (SPPG/Mitra), ukuran lebar px, tautan otomatis, dan target dokumen."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -243,6 +247,22 @@
           "type": "string",
           "maxLength": 200000
         },
+        "logoWidthPx": {
+          "type": "number"
+        },
+        "logoRightDataUrl": {
+          "type": "string",
+          "maxLength": 200000
+        },
+        "logoRightWidthPx": {
+          "type": "number"
+        },
+        "followGlobalLeftLogo": {
+          "type": "boolean"
+        },
+        "followGlobalRightLogo": {
+          "type": "boolean"
+        },
         "logoCaption": {
           "type": "string",
           "maxLength": 80
@@ -423,6 +443,22 @@
         "logoDataUrl": {
           "type": "string",
           "maxLength": 200000
+        },
+        "logoWidthPx": {
+          "type": "number"
+        },
+        "logoRightDataUrl": {
+          "type": "string",
+          "maxLength": 200000
+        },
+        "logoRightWidthPx": {
+          "type": "number"
+        },
+        "followGlobalLeftLogo": {
+          "type": "boolean"
+        },
+        "followGlobalRightLogo": {
+          "type": "boolean"
         },
         "logoCaption": {
           "type": "string",
@@ -650,6 +686,22 @@
         "logoDataUrl": {
           "type": "string",
           "maxLength": 200000
+        },
+        "logoWidthPx": {
+          "type": "number"
+        },
+        "logoRightDataUrl": {
+          "type": "string",
+          "maxLength": 200000
+        },
+        "logoRightWidthPx": {
+          "type": "number"
+        },
+        "followGlobalLeftLogo": {
+          "type": "boolean"
+        },
+        "followGlobalRightLogo": {
+          "type": "boolean"
         },
         "logoCaption": {
           "type": "string",
@@ -920,9 +972,21 @@
           "type": "string",
           "maxLength": 200000
         },
+        "logoLeftWidthPx": {
+          "type": "number"
+        },
         "logoRightDataUrl": {
           "type": "string",
           "maxLength": 200000
+        },
+        "logoRightWidthPx": {
+          "type": "number"
+        },
+        "followGlobalLeftLogo": {
+          "type": "boolean"
+        },
+        "followGlobalRightLogo": {
+          "type": "boolean"
         },
         "headerLine1": {
           "type": "string",
@@ -1080,6 +1144,11 @@
         "titleSpecific": { "type": "string", "maxLength": 120 },
         "titleSummary": { "type": "string", "maxLength": 120 },
         "logoDataUrl": { "type": "string", "maxLength": 200000 },
+        "logoWidthPx": { "type": "number" },
+        "logoRightDataUrl": { "type": "string", "maxLength": 200000 },
+        "logoRightWidthPx": { "type": "number" },
+        "followGlobalLeftLogo": { "type": "boolean" },
+        "followGlobalRightLogo": { "type": "boolean" },
         "specificRows": { "type": "array", "description": "Daftar penerima manfaat per sekolah atau lembaga." },
         "summaryOverrides": { "type": "object", "description": "Penyesuaian manual per kelompok sasaran." },
         "createdAt": { "type": "string", "format": "date-time" },
@@ -1105,6 +1174,11 @@
         "headerLine3": { "type": "string", "maxLength": 150 },
         "headerAlamat": { "type": "string", "maxLength": 250 },
         "logoDataUrl": { "type": "string", "maxLength": 200000 },
+        "logoWidthPx": { "type": "number" },
+        "logoRightDataUrl": { "type": "string", "maxLength": 200000 },
+        "logoRightWidthPx": { "type": "number" },
+        "followGlobalLeftLogo": { "type": "boolean" },
+        "followGlobalRightLogo": { "type": "boolean" },
         "worksheets": { "type": "array", "description": "Daftar lembar kerja kategori/gabungan/alergi." },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
@@ -1128,6 +1202,11 @@
         "headerLine3": { "type": "string", "maxLength": 150 },
         "headerAlamat": { "type": "string", "maxLength": 250 },
         "logoDataUrl": { "type": "string", "maxLength": 200000 },
+        "logoWidthPx": { "type": "number" },
+        "logoRightDataUrl": { "type": "string", "maxLength": 200000 },
+        "logoRightWidthPx": { "type": "number" },
+        "followGlobalLeftLogo": { "type": "boolean" },
+        "followGlobalRightLogo": { "type": "boolean" },
         "recapTitle": { "type": "string", "maxLength": 150 },
         "sideLabel": { "type": "string", "maxLength": 60 },
         "bufferPercent": { "type": "number" },
@@ -1151,6 +1230,37 @@
         "bumbuPercent", "rabPorsiKecilRate", "rabPorsiBesarRate", "poJudul",
         "poDari", "poKepada", "poAlamat", "poSignerLabel1", "poSignerLabel2",
         "poSignerName", "itemOverrides", "createdAt", "updatedAt"
+      ]
+    },
+    "MasterMenuPlan": {
+      "title": "MasterMenuPlan",
+      "description": "Jadwal Master Menu mingguan (1-4 minggu atau bulanan) per kategori penerima manfaat dengan sinkronisasi otomatis ke Nilai Gizi & Food Cost dan Rekapan Menu.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "monthKey": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}$", "minLength": 7, "maxLength": 7 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "categoryIds": { "type": "array", "description": "Daftar ID kategori kelompok sasaran penerima manfaat." },
+        "cycleMode": { "type": "string", "enum": ["1_minggu", "2_minggu", "3_minggu", "4_minggu", "bulanan"] },
+        "headerLine1": { "type": "string", "maxLength": 120 },
+        "headerLine2": { "type": "string", "maxLength": 150 },
+        "headerLine3": { "type": "string", "maxLength": 150 },
+        "headerAlamat": { "type": "string", "maxLength": 250 },
+        "logoDataUrl": { "type": "string", "maxLength": 200000 },
+        "logoWidthPx": { "type": "number" },
+        "logoRightDataUrl": { "type": "string", "maxLength": 200000 },
+        "logoRightWidthPx": { "type": "number" },
+        "followGlobalLeftLogo": { "type": "boolean" },
+        "followGlobalRightLogo": { "type": "boolean" },
+        "rowLabels": { "type": "object", "description": "Label baris kelompok bahan makanan (Makanan Pokok s/d Susu)." },
+        "weeks": { "type": "array", "description": "Blok minggu ke-1 s/d ke-5 berisi jadwal menu harian." },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid", "monthKey", "title", "categoryIds", "cycleMode",
+        "headerLine1", "headerLine2", "headerLine3", "headerAlamat",
+        "rowLabels", "weeks", "createdAt", "updatedAt"
       ]
     }
   },
@@ -1256,6 +1366,12 @@
         "$ref": "#/entities/RawMaterialRecapDayConfig"
       },
       "description": "Rekapan total kebutuhan bahan baku dengan buffer fleksibel serta Nota Pesanan (PO)."
+    },
+    "/users/{userId}/months/{monthId}/masterMenus/{planId}": {
+      "schema": {
+        "$ref": "#/entities/MasterMenuPlan"
+      },
+      "description": "Dokumen Master Menu siklus 1-4 minggu atau bulanan per kelompok sasaran."
     }
   }
 }

@@ -17,6 +17,7 @@ import type {
   FoodTempSheetType,
   DailyPmRecord,
   FoodCostDayPlan,
+  MasterMenuPlan,
   RawMaterialRecapDayConfig,
 } from '../types';
 import {
@@ -41,6 +42,93 @@ import {
   computePmSummary,
   computeRawMaterialRecap,
 } from './foodCostCalculator';
+import { resolveDocumentLogos } from './logoResolver';
+import { DEFAULT_MASTER_MENU_ROW_LABELS } from './masterMenuHelper';
+
+function drawScaledLogo(
+  doc: jsPDF,
+  dataUrl: string | undefined,
+  centerX: number,
+  centerY: number,
+  targetWidthMm: number,
+  maxHeightMm: number
+): boolean {
+  if (!dataUrl) return false;
+  try {
+    const props = doc.getImageProperties(dataUrl);
+    const ratio = props && props.width > 0 ? props.height / props.width : 1;
+    let drawW = Math.max(6, targetWidthMm);
+    let drawH = drawW * ratio;
+    if (drawH > maxHeightMm) {
+      drawH = maxHeightMm;
+      drawW = ratio > 0 ? drawH / ratio : targetWidthMm;
+    }
+    doc.addImage(dataUrl, centerX - drawW / 2, centerY - drawH / 2, drawW, drawH);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function drawOptionalBannerKopHeader(params: {
+  doc: jsPDF;
+  marginX: number;
+  cursorY: number;
+  contentWidth: number;
+  namaSppg: string;
+  leftUrl?: string;
+  leftWidthMm: number;
+  rightUrl?: string;
+  rightWidthMm: number;
+}): number {
+  const { doc, marginX, cursorY, contentWidth, namaSppg, leftUrl, leftWidthMm, rightUrl, rightWidthMm } = params;
+  if (!leftUrl && !rightUrl) return cursorY;
+
+  const kopH = 19;
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.3);
+  doc.rect(marginX, cursorY, contentWidth, kopH, 'FD');
+
+  const maxSlotW = 32;
+  const effLeftW = Math.min(maxSlotW, Math.max(7, leftWidthMm));
+  const effRightW = Math.min(maxSlotW, Math.max(7, rightWidthMm));
+
+  if (leftUrl) {
+    drawScaledLogo(doc, leftUrl, marginX + 2.5 + effLeftW / 2, cursorY + kopH / 2, effLeftW, kopH - 3);
+  }
+  if (rightUrl) {
+    drawScaledLogo(
+      doc,
+      rightUrl,
+      marginX + contentWidth - 2.5 - effRightW / 2,
+      cursorY + kopH / 2,
+      effRightW,
+      kopH - 3
+    );
+  }
+
+  const centerX = marginX + contentWidth / 2;
+  const sidePad = Math.max(leftUrl ? effLeftW : 0, rightUrl ? effRightW : 0) + 8;
+  const maxW = Math.max(60, contentWidth - sidePad * 2);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(0, 0, 0);
+  doc.setFontSize(9.5);
+  doc.text('BADAN GIZI NASIONAL', centerX, cursorY + 5.8, { align: 'center', maxWidth: maxW });
+  doc.setFontSize(9.0);
+  doc.text('SATUAN PELAYANAN PEMENUHAN GIZI', centerX, cursorY + 10.5, {
+    align: 'center',
+    maxWidth: maxW,
+  });
+  doc.setFontSize(8.8);
+  doc.text((namaSppg || 'SPPG').toUpperCase(), centerX, cursorY + 15.2, {
+    align: 'center',
+    maxWidth: maxW,
+  });
+
+  return cursorY + kopH;
+}
 
 export function exportRekapanToF4Pdf(params: {
   profile: SppgUserProfile;
@@ -77,6 +165,19 @@ export function exportRekapanToF4Pdf(params: {
   const marginX = 10;
   const contentWidth = pageWidth - marginX * 2;
   let cursorY = 10;
+
+  const rekapanLogos = resolveDocumentLogos(profile, 'rekapan');
+  cursorY = drawOptionalBannerKopHeader({
+    doc,
+    marginX,
+    cursorY,
+    contentWidth,
+    namaSppg: profile.namaSppg || 'SPPG',
+    leftUrl: rekapanLogos.leftUrl,
+    leftWidthMm: rekapanLogos.leftWidthMm,
+    rightUrl: rekapanLogos.rightUrl,
+    rightWidthMm: rekapanLogos.rightWidthMm,
+  });
 
   // 1. Top Vibrant Green Title Banner (#00B050)
   const bannerHeight = 9.5;
@@ -434,6 +535,19 @@ export function exportNutritionToF4Pdf(params: {
   const contentWidth = pageWidth - marginX * 2;
   let cursorY = 10;
 
+  const giziLogos = resolveDocumentLogos(profile, 'gizi');
+  cursorY = drawOptionalBannerKopHeader({
+    doc,
+    marginX,
+    cursorY,
+    contentWidth,
+    namaSppg: profile.namaSppg || 'SPPG',
+    leftUrl: giziLogos.leftUrl,
+    leftWidthMm: giziLogos.leftWidthMm,
+    rightUrl: giziLogos.rightUrl,
+    rightWidthMm: giziLogos.rightWidthMm,
+  });
+
   // 1. Green Banner
   const bannerHeight = 9;
   doc.setFillColor(0, 176, 80);
@@ -642,12 +756,14 @@ export function exportNutritionToF4Pdf(params: {
 export function exportSamplePertinggalToF4Pdf(params: {
   config: SampleFormConfig;
   rows: SamplePertinggalRow[];
+  profile?: SppgUserProfile;
   orientation?: PdfOrientation;
   minPrintableRows?: number;
 }): void {
   const {
     config,
     rows,
+    profile,
     orientation = 'landscape',
     minPrintableRows = 10,
   } = params;
@@ -666,10 +782,13 @@ export function exportSamplePertinggalToF4Pdf(params: {
   const contentWidth = pageWidth - marginX * 2;
   let cursorY = 14;
 
-  // 1. Official 3-Column Header Box
+  const logos = resolveDocumentLogos(profile, 'sampel', config);
+
+  // 1. Official 3-Column (or 4-Column with Right Logo) Header Box
   const col1W = orientation === 'landscape' ? 42 : 30;
-  const col3W = orientation === 'landscape' ? 92 : 66;
-  const col2W = contentWidth - col1W - col3W;
+  const col4W = logos.rightUrl ? (orientation === 'landscape' ? 32 : 24) : 0;
+  const col3W = orientation === 'landscape' ? 88 : 62;
+  const col2W = contentWidth - col1W - col3W - col4W;
   const rowH = 8.5;
   const headerTotalH = rowH * 3;
 
@@ -684,24 +803,21 @@ export function exportSamplePertinggalToF4Pdf(params: {
   doc.rect(marginX + col1W + col2W, cursorY, col3W, rowH, 'S');
   doc.rect(marginX + col1W + col2W, cursorY + rowH, col3W, rowH, 'S');
   doc.rect(marginX + col1W + col2W, cursorY + rowH * 2, col3W, rowH, 'S');
+  if (col4W > 0) {
+    doc.rect(marginX + col1W + col2W + col3W, cursorY, col4W, headerTotalH, 'S');
+  }
 
   // Logo in col1
   const logoCenterX = marginX + col1W / 2;
-  if (config.logoDataUrl) {
-    try {
-      const imgSize = 15;
-      doc.addImage(
-        config.logoDataUrl,
-        logoCenterX - imgSize / 2,
-        cursorY + 2,
-        imgSize,
-        imgSize
-      );
-    } catch {
-      doc.setDrawColor(70, 95, 130);
-      doc.circle(logoCenterX, cursorY + 10, 6.5, 'S');
-    }
-  } else {
+  const drewLeft = drawScaledLogo(
+    doc,
+    logos.leftUrl,
+    logoCenterX,
+    cursorY + 9.5,
+    Math.min(col1W - 4, logos.leftWidthMm),
+    15
+  );
+  if (!drewLeft) {
     doc.setDrawColor(70, 95, 130);
     doc.setLineWidth(0.5);
     doc.circle(logoCenterX, cursorY + 10, 6.5, 'S');
@@ -715,6 +831,17 @@ export function exportSamplePertinggalToF4Pdf(params: {
     align: 'center',
     maxWidth: col1W - 3,
   });
+
+  if (col4W > 0 && logos.rightUrl) {
+    drawScaledLogo(
+      doc,
+      logos.rightUrl,
+      marginX + col1W + col2W + col3W + col4W / 2,
+      cursorY + headerTotalH / 2,
+      Math.min(col4W - 4, logos.rightWidthMm),
+      headerTotalH - 4
+    );
+  }
 
   // Middle column text
   const midCenterX = marginX + col1W + col2W / 2;
@@ -734,7 +861,7 @@ export function exportSamplePertinggalToF4Pdf(params: {
 
   // Right column metadata
   const rightLabelX = marginX + col1W + col2W + 3;
-  const rightColonX = rightLabelX + (orientation === 'landscape' ? 30 : 25);
+  const rightColonX = rightLabelX + (orientation === 'landscape' ? 28 : 23);
   const rightValX = rightColonX + 3.5;
   doc.setFont('times', 'normal');
   doc.setFontSize(8.5);
@@ -885,9 +1012,10 @@ export function exportTemperatureMonitoringToF4Pdf(params: {
     readings: TempDayReading[];
   }>;
   allRoomsForSop?: TempMonitoringRoom[];
+  profile?: SppgUserProfile;
   orientation?: PdfOrientation;
 }): void {
-  const { config, sheets, allRoomsForSop, orientation = 'landscape' } = params;
+  const { config, sheets, allRoomsForSop, profile, orientation = 'landscape' } = params;
   if (sheets.length === 0) return;
 
   // F4 Landscape (330x215mm) is optimal for 33-column monitoring sheets
@@ -908,6 +1036,7 @@ export function exportTemperatureMonitoringToF4Pdf(params: {
     ...DEFAULT_TEMP_TABLE_LABELS,
     ...(config.tableLabels || {}),
   };
+  const logos = resolveDocumentLogos(profile, 'suhu', config);
 
   sheets.forEach((sheet, sheetIndex) => {
     if (sheetIndex > 0) {
@@ -917,10 +1046,11 @@ export function exportTemperatureMonitoringToF4Pdf(params: {
     let cursorY = 8;
     const { room, readings } = sheet;
 
-    // 1. Official 3-Column Kop Header
-    const col1W = orientation === 'landscape' ? 34 : 26;
-    const col3W = orientation === 'landscape' ? 76 : 54;
-    const col2W = contentWidth - col1W - col3W;
+    // 1. Official 3-Column (or 4-Column with Right Logo) Kop Header
+    const col1W = orientation === 'landscape' ? 36 : 27;
+    const col4W = logos.rightUrl ? (orientation === 'landscape' ? 28 : 22) : 0;
+    const col3W = orientation === 'landscape' ? 74 : 52;
+    const col2W = contentWidth - col1W - col3W - col4W;
     const rowH = 6.8;
     const headerTotalH = rowH * 3;
 
@@ -934,24 +1064,21 @@ export function exportTemperatureMonitoringToF4Pdf(params: {
     doc.rect(marginX + col1W + col2W, cursorY, col3W, rowH, 'S');
     doc.rect(marginX + col1W + col2W, cursorY + rowH, col3W, rowH, 'S');
     doc.rect(marginX + col1W + col2W, cursorY + rowH * 2, col3W, rowH, 'S');
+    if (col4W > 0) {
+      doc.rect(marginX + col1W + col2W + col3W, cursorY, col4W, headerTotalH, 'S');
+    }
 
     // Logo col1
     const logoCenterX = marginX + col1W / 2;
-    if (config.logoDataUrl) {
-      try {
-        const imgSize = 12;
-        doc.addImage(
-          config.logoDataUrl,
-          logoCenterX - imgSize / 2,
-          cursorY + 1.5,
-          imgSize,
-          imgSize
-        );
-      } catch {
-        doc.setDrawColor(40, 60, 90);
-        doc.circle(logoCenterX, cursorY + 7.5, 5.2, 'S');
-      }
-    } else {
+    const drewLeft = drawScaledLogo(
+      doc,
+      logos.leftUrl,
+      logoCenterX,
+      cursorY + 7.5,
+      Math.min(col1W - 3, logos.leftWidthMm),
+      12.5
+    );
+    if (!drewLeft) {
       doc.setDrawColor(40, 60, 90);
       doc.setLineWidth(0.45);
       doc.circle(logoCenterX, cursorY + 7.5, 5.2, 'S');
@@ -965,6 +1092,17 @@ export function exportTemperatureMonitoringToF4Pdf(params: {
       align: 'center',
       maxWidth: col1W - 2,
     });
+
+    if (col4W > 0 && logos.rightUrl) {
+      drawScaledLogo(
+        doc,
+        logos.rightUrl,
+        marginX + col1W + col2W + col3W + col4W / 2,
+        cursorY + headerTotalH / 2,
+        Math.min(col4W - 3, logos.rightWidthMm),
+        headerTotalH - 3
+      );
+    }
 
     // Middle col2
     const midCenterX = marginX + col1W + col2W / 2;
@@ -987,7 +1125,7 @@ export function exportTemperatureMonitoringToF4Pdf(params: {
 
     // Right col3
     const rightLabelX = marginX + col1W + col2W + 2.5;
-    const rightColonX = rightLabelX + (orientation === 'landscape' ? 24 : 18);
+    const rightColonX = rightLabelX + (orientation === 'landscape' ? 23 : 17);
     const rightValX = rightColonX + 2.5;
     doc.setFontSize(orientation === 'landscape' ? 7.8 : 6.8);
     const metaPairs: Array<[string, string]> = [
@@ -1210,9 +1348,10 @@ export function exportFreezerChillerToF4Pdf(params: {
     machine: FreezerMachine;
     rows: FreezerLogRow[];
   }>;
+  profile?: SppgUserProfile;
   orientation?: PdfOrientation;
 }): void {
-  const { config, sheets, orientation = 'landscape' } = params;
+  const { config, sheets, profile, orientation = 'landscape' } = params;
   if (sheets.length === 0) return;
 
   const f4Format: [number, number] =
@@ -1232,6 +1371,7 @@ export function exportFreezerChillerToF4Pdf(params: {
     ...DEFAULT_FREEZER_COL_LABELS,
     ...(config.colLabels || {}),
   };
+  const logos = resolveDocumentLogos(profile, 'freezer', config);
 
   sheets.forEach((sheet, sheetIdx) => {
     if (sheetIdx > 0) {
@@ -1241,10 +1381,11 @@ export function exportFreezerChillerToF4Pdf(params: {
     const { machine, rows } = sheet;
     let cursorY = 10;
 
-    // 1. Official 3-Column Kop Header
+    // 1. Official 3-Column (or 4-Column with Right Logo) Kop Header
     const col1W = orientation === 'landscape' ? 40 : 28;
-    const col3W = orientation === 'landscape' ? 86 : 58;
-    const col2W = contentWidth - col1W - col3W;
+    const col4W = logos.rightUrl ? (orientation === 'landscape' ? 30 : 22) : 0;
+    const col3W = orientation === 'landscape' ? 82 : 56;
+    const col2W = contentWidth - col1W - col3W - col4W;
     const rowH = 7.4;
     const headerTotalH = rowH * 3;
 
@@ -1258,24 +1399,21 @@ export function exportFreezerChillerToF4Pdf(params: {
     doc.rect(marginX + col1W + col2W, cursorY, col3W, rowH, 'S');
     doc.rect(marginX + col1W + col2W, cursorY + rowH, col3W, rowH, 'S');
     doc.rect(marginX + col1W + col2W, cursorY + rowH * 2, col3W, rowH, 'S');
+    if (col4W > 0) {
+      doc.rect(marginX + col1W + col2W + col3W, cursorY, col4W, headerTotalH, 'S');
+    }
 
     // Logo col1
     const logoCenterX = marginX + col1W / 2;
-    if (config.logoDataUrl) {
-      try {
-        const imgSize = 13;
-        doc.addImage(
-          config.logoDataUrl,
-          logoCenterX - imgSize / 2,
-          cursorY + 1.8,
-          imgSize,
-          imgSize
-        );
-      } catch {
-        doc.setDrawColor(70, 95, 130);
-        doc.circle(logoCenterX, cursorY + 8.5, 5.8, 'S');
-      }
-    } else {
+    const drewLeft = drawScaledLogo(
+      doc,
+      logos.leftUrl,
+      logoCenterX,
+      cursorY + 8.3,
+      Math.min(col1W - 3, logos.leftWidthMm),
+      13.5
+    );
+    if (!drewLeft) {
       doc.setDrawColor(70, 95, 130);
       doc.setLineWidth(0.45);
       doc.circle(logoCenterX, cursorY + 8.5, 5.8, 'S');
@@ -1289,6 +1427,17 @@ export function exportFreezerChillerToF4Pdf(params: {
       align: 'center',
       maxWidth: col1W - 2,
     });
+
+    if (col4W > 0 && logos.rightUrl) {
+      drawScaledLogo(
+        doc,
+        logos.rightUrl,
+        marginX + col1W + col2W + col3W + col4W / 2,
+        cursorY + headerTotalH / 2,
+        Math.min(col4W - 3, logos.rightWidthMm),
+        headerTotalH - 3
+      );
+    }
 
     // Middle col2
     const midCenterX = marginX + col1W + col2W / 2;
@@ -1312,7 +1461,7 @@ export function exportFreezerChillerToF4Pdf(params: {
 
     // Right col3
     const rightLabelX = marginX + col1W + col2W + 3;
-    const rightColonX = rightLabelX + (orientation === 'landscape' ? 28 : 20);
+    const rightColonX = rightLabelX + (orientation === 'landscape' ? 27 : 19);
     const rightValX = rightColonX + 3;
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(orientation === 'landscape' ? 8.2 : 7.0);
@@ -1561,9 +1710,10 @@ export function exportFoodTemperatureToF4Pdf(params: {
   config: FoodTempFormConfig;
   blocks: FoodTempDayBlock[];
   sheetsToExport: FoodTempSheetType[];
+  profile?: SppgUserProfile;
   orientation?: PdfOrientation;
 }): void {
-  const { config, blocks, sheetsToExport, orientation = 'portrait' } = params;
+  const { config, blocks, sheetsToExport, profile, orientation = 'portrait' } = params;
   if (sheetsToExport.length === 0) return;
 
   const f4Format: [number, number] =
@@ -1583,6 +1733,7 @@ export function exportFoodTemperatureToF4Pdf(params: {
     ...DEFAULT_FOOD_TEMP_COL_LABELS,
     ...(config.colLabels || {}),
   };
+  const logos = resolveDocumentLogos(profile, 'makanan', config);
 
   sheetsToExport.forEach((sheetType, sheetIdx) => {
     if (sheetIdx > 0) {
@@ -1592,27 +1743,24 @@ export function exportFoodTemperatureToF4Pdf(params: {
     let cursorY = 12;
 
     // 1. Official Dual-Logo Kop Surat matching image_019d0cdc.png
-    const logoSize = orientation === 'landscape' ? 18 : 16;
+    const fallbackSize = orientation === 'landscape' ? 18 : 16;
+    const leftLogoW = logos.leftUrl ? Math.min(34, logos.leftWidthMm) : fallbackSize;
+    const rightLogoW = logos.rightUrl ? Math.min(34, logos.rightWidthMm) : fallbackSize;
+    const maxLogoH = 19;
     const leftLogoX = marginX + 2;
-    const rightLogoX = pageWidth - marginX - logoSize - 2;
+    const rightLogoX = pageWidth - marginX - rightLogoW - 2;
+    const logoMidY = cursorY + 9;
 
     // Left Logo (BGN Emblem)
-    if (config.logoLeftDataUrl) {
-      try {
-        doc.addImage(config.logoLeftDataUrl, leftLogoX, cursorY, logoSize, logoSize);
-      } catch {
-        doc.setDrawColor(40, 70, 120);
-        doc.setLineWidth(0.5);
-        doc.circle(leftLogoX + logoSize / 2, cursorY + logoSize / 2, logoSize * 0.44, 'S');
-      }
-    } else {
-      const cx = leftLogoX + logoSize / 2;
-      const cy = cursorY + logoSize / 2;
+    const drewLeft = drawScaledLogo(doc, logos.leftUrl, leftLogoX + leftLogoW / 2, logoMidY, leftLogoW, maxLogoH);
+    if (!drewLeft) {
+      const cx = leftLogoX + leftLogoW / 2;
+      const cy = logoMidY;
       doc.setDrawColor(30, 64, 120);
       doc.setLineWidth(0.6);
-      doc.circle(cx, cy, logoSize * 0.44, 'S');
+      doc.circle(cx, cy, fallbackSize * 0.44, 'S');
       doc.setLineWidth(0.25);
-      doc.circle(cx, cy, logoSize * 0.32, 'S');
+      doc.circle(cx, cy, fallbackSize * 0.32, 'S');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(5.5);
       doc.setTextColor(30, 64, 120);
@@ -1620,22 +1768,15 @@ export function exportFoodTemperatureToF4Pdf(params: {
     }
 
     // Right Logo (SPPG / BGN Green Emblem)
-    if (config.logoRightDataUrl) {
-      try {
-        doc.addImage(config.logoRightDataUrl, rightLogoX, cursorY, logoSize, logoSize);
-      } catch {
-        doc.setDrawColor(22, 101, 52);
-        doc.setLineWidth(0.5);
-        doc.circle(rightLogoX + logoSize / 2, cursorY + logoSize / 2, logoSize * 0.44, 'S');
-      }
-    } else {
-      const cx = rightLogoX + logoSize / 2;
-      const cy = cursorY + logoSize / 2;
+    const drewRight = drawScaledLogo(doc, logos.rightUrl, rightLogoX + rightLogoW / 2, logoMidY, rightLogoW, maxLogoH);
+    if (!drewRight) {
+      const cx = rightLogoX + rightLogoW / 2;
+      const cy = logoMidY;
       doc.setDrawColor(22, 101, 52);
       doc.setLineWidth(0.6);
-      doc.circle(cx, cy, logoSize * 0.44, 'S');
+      doc.circle(cx, cy, fallbackSize * 0.44, 'S');
       doc.setLineWidth(0.25);
-      doc.circle(cx, cy, logoSize * 0.32, 'S');
+      doc.circle(cx, cy, fallbackSize * 0.32, 'S');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(5.2);
       doc.setTextColor(22, 101, 52);
@@ -1644,7 +1785,7 @@ export function exportFoodTemperatureToF4Pdf(params: {
 
     // Center Kop Lines
     const kopCenterX = pageWidth / 2;
-    const kopMaxW = contentWidth - logoSize * 2 - 12;
+    const kopMaxW = contentWidth - Math.max(leftLogoW, rightLogoW) * 2 - 12;
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(30, 41, 59);
     doc.setFontSize(orientation === 'landscape' ? 11.5 : 10.2);
@@ -1674,7 +1815,7 @@ export function exportFoodTemperatureToF4Pdf(params: {
       maxWidth: kopMaxW,
     });
 
-    cursorY += Math.max(logoSize, 18) + 2.5;
+    cursorY += 20.5;
 
     // Double horizontal kop line
     doc.setDrawColor(0, 0, 0);
@@ -1853,40 +1994,64 @@ function drawBgnStandardKopHeader(params: {
   startY: number;
   width: number;
   logoDataUrl?: string;
+  logoLeftWidthMm?: number;
+  logoRightDataUrl?: string;
+  logoRightWidthMm?: number;
   line1: string;
   line2: string;
   line3: string;
   alamat: string;
 }): number {
-  const { doc, startX, startY, width, logoDataUrl, line1, line2, line3, alamat } = params;
-  const logoSize = 15;
-  const logoX = startX + 2;
-  const logoY = startY + 1;
+  const {
+    doc,
+    startX,
+    startY,
+    width,
+    logoDataUrl,
+    logoLeftWidthMm,
+    logoRightDataUrl,
+    logoRightWidthMm,
+    line1,
+    line2,
+    line3,
+    alamat,
+  } = params;
 
-  if (logoDataUrl) {
-    try {
-      doc.addImage(logoDataUrl, logoX, logoY, logoSize, logoSize);
-    } catch {
-      doc.setDrawColor(30, 64, 120);
-      doc.setLineWidth(0.5);
-      doc.circle(logoX + logoSize / 2, logoY + logoSize / 2, logoSize * 0.42, 'S');
-    }
-  } else {
-    const cx = logoX + logoSize / 2;
-    const cy = logoY + logoSize / 2;
+  const maxLogoW = 34;
+  const maxLogoH = 18.5;
+  const leftW = Math.min(maxLogoW, Math.max(7, logoLeftWidthMm || 15));
+  const rightW = Math.min(maxLogoW, Math.max(7, logoRightWidthMm || 15));
+  const logoMidY = startY + 9.5;
+
+  const drewLeft = drawScaledLogo(doc, logoDataUrl, startX + 2 + leftW / 2, logoMidY, leftW, maxLogoH);
+  if (!drewLeft) {
+    const cx = startX + 2 + 7.5;
+    const cy = logoMidY;
     doc.setDrawColor(30, 64, 120);
     doc.setLineWidth(0.6);
-    doc.circle(cx, cy, logoSize * 0.43, 'S');
+    doc.circle(cx, cy, 6.4, 'S');
     doc.setLineWidth(0.25);
-    doc.circle(cx, cy, logoSize * 0.31, 'S');
+    doc.circle(cx, cy, 4.6, 'S');
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(5.4);
     doc.setTextColor(30, 64, 120);
     doc.text('BGN', cx, cy + 1.4, { align: 'center' });
   }
 
+  if (logoRightDataUrl) {
+    drawScaledLogo(
+      doc,
+      logoRightDataUrl,
+      startX + width - 2 - rightW / 2,
+      logoMidY,
+      rightW,
+      maxLogoH
+    );
+  }
+
+  const sideReserve = Math.max(leftW, logoRightDataUrl ? rightW : leftW, 15);
   const centerX = startX + width / 2;
-  const textMaxW = width - logoSize * 2 - 8;
+  const textMaxW = Math.max(60, width - sideReserve * 2 - 8);
 
   doc.setTextColor(0, 0, 0);
   doc.setFont('helvetica', 'bold');
@@ -1960,9 +2125,10 @@ function fmtPdfNum(val: number, decimals = 1): string {
 export function exportUpdatePmToF4Pdf(params: {
   record: DailyPmRecord;
   viewMode?: 'specific' | 'summary' | 'both';
+  profile?: SppgUserProfile;
   orientation?: PdfOrientation;
 }): void {
-  const { record, viewMode = 'both', orientation = 'portrait' } = params;
+  const { record, viewMode = 'both', profile, orientation = 'portrait' } = params;
   const f4Format: [number, number] =
     orientation === 'landscape' ? [330, 215] : [215, 330];
 
@@ -1977,6 +2143,7 @@ export function exportUpdatePmToF4Pdf(params: {
   const contentWidth = pageWidth - marginX * 2;
   const dateDisplay = formatIndonesianFullDate(record.dateIso);
   const summary = computePmSummary(record);
+  const logos = resolveDocumentLogos(profile, 'update_pm', record);
 
   const greenBg: [number, number, number] = [0, 176, 80];
   const orangeBg: [number, number, number] = [255, 102, 0];
@@ -1989,7 +2156,10 @@ export function exportUpdatePmToF4Pdf(params: {
       startX: marginX,
       startY: 10,
       width: contentWidth,
-      logoDataUrl: record.logoDataUrl,
+      logoDataUrl: logos.leftUrl,
+      logoLeftWidthMm: logos.leftWidthMm,
+      logoRightDataUrl: logos.rightUrl,
+      logoRightWidthMm: logos.rightWidthMm,
       line1: record.headerLine1,
       line2: record.headerLine2,
       line3: record.headerLine3,
@@ -2207,9 +2377,10 @@ export function exportFoodCostNutritionToF4Pdf(params: {
   plan: FoodCostDayPlan;
   pmRecord: DailyPmRecord | null;
   worksheetIds?: string[];
+  profile?: SppgUserProfile;
   orientation?: PdfOrientation;
 }): void {
-  const { plan, pmRecord, worksheetIds, orientation = 'landscape' } = params;
+  const { plan, pmRecord, worksheetIds, profile, orientation = 'landscape' } = params;
   const worksheets =
     worksheetIds && worksheetIds.length > 0
       ? plan.worksheets.filter((w) => worksheetIds.includes(w.id))
@@ -2235,6 +2406,7 @@ export function exportFoodCostNutritionToF4Pdf(params: {
   const workW = pageWidth - marginX * 2 - stripW;
   const pmSummary = computePmSummary(pmRecord);
   const dateDisplay = formatIndonesianFullDate(plan.dateIso);
+  const logos = resolveDocumentLogos(profile, 'foodcost', plan);
 
   const greenBg: [number, number, number] = [0, 176, 80];
   const limeBg: [number, number, number] = [204, 255, 0];
@@ -2263,7 +2435,10 @@ export function exportFoodCostNutritionToF4Pdf(params: {
       startX: rightX,
       startY: marginY + 1,
       width: workW,
-      logoDataUrl: plan.logoDataUrl,
+      logoDataUrl: logos.leftUrl,
+      logoLeftWidthMm: logos.leftWidthMm,
+      logoRightDataUrl: logos.rightUrl,
+      logoRightWidthMm: logos.rightWidthMm,
       line1: plan.headerLine1,
       line2: plan.headerLine2,
       line3: plan.headerLine3,
@@ -2517,9 +2692,10 @@ export function exportRawMaterialAndPoToF4Pdf(params: {
   foodCostPlan: FoodCostDayPlan | null;
   pmRecord: DailyPmRecord | null;
   mode?: 'rekap' | 'po' | 'both';
+  profile?: SppgUserProfile;
   orientation?: PdfOrientation;
 }): void {
-  const { recapConfig, foodCostPlan, pmRecord, mode = 'both', orientation = 'landscape' } = params;
+  const { recapConfig, foodCostPlan, pmRecord, mode = 'both', profile, orientation = 'landscape' } = params;
   const f4Format: [number, number] =
     orientation === 'landscape' ? [330, 215] : [215, 330];
 
@@ -2534,6 +2710,8 @@ export function exportRawMaterialAndPoToF4Pdf(params: {
   const pmSummary = computePmSummary(pmRecord);
   const recap = computeRawMaterialRecap(foodCostPlan, pmSummary, recapConfig);
   const dateDisplay = formatIndonesianFullDate(recapConfig.dateIso);
+  const recapLogos = resolveDocumentLogos(profile, 'rekap_bahan', recapConfig);
+  const poLogos = resolveDocumentLogos(profile, 'po_bahan', recapConfig);
 
   const limeBg: [number, number, number] = [204, 255, 0];
   const passGreenBg: [number, number, number] = [146, 208, 80];
@@ -2566,7 +2744,10 @@ export function exportRawMaterialAndPoToF4Pdf(params: {
       startX: rightX,
       startY: marginY + 1,
       width: workW,
-      logoDataUrl: recapConfig.logoDataUrl,
+      logoDataUrl: recapLogos.leftUrl,
+      logoLeftWidthMm: recapLogos.leftWidthMm,
+      logoRightDataUrl: recapLogos.rightUrl,
+      logoRightWidthMm: recapLogos.rightWidthMm,
       line1: recapConfig.headerLine1,
       line2: recapConfig.headerLine2,
       line3: recapConfig.headerLine3,
@@ -2744,7 +2925,10 @@ export function exportRawMaterialAndPoToF4Pdf(params: {
       startX: marginX,
       startY: y,
       width: contentWidth,
-      logoDataUrl: recapConfig.logoDataUrl,
+      logoDataUrl: poLogos.leftUrl,
+      logoLeftWidthMm: poLogos.leftWidthMm,
+      logoRightDataUrl: poLogos.rightUrl,
+      logoRightWidthMm: poLogos.rightWidthMm,
       line1: recapConfig.headerLine1,
       line2: recapConfig.headerLine2,
       line3: recapConfig.headerLine3,
@@ -2866,5 +3050,163 @@ export function exportRawMaterialAndPoToF4Pdf(params: {
 
   doc.save(`REKAP_BAHAN_BAKU_PO_${recapConfig.dateIso}.pdf`);
 }
+
+export function exportMasterMenuToF4Pdf(params: {
+  plan: MasterMenuPlan;
+  profile?: SppgUserProfile;
+  orientation?: PdfOrientation;
+}): void {
+  const { plan, profile, orientation = 'landscape' } = params;
+  const f4Format: [number, number] =
+    orientation === 'landscape' ? [330, 215] : [215, 330];
+
+  const doc = new jsPDF({
+    orientation,
+    unit: 'mm',
+    format: f4Format,
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const marginX = 8;
+  const contentWidth = pageWidth - marginX * 2;
+  const logos = resolveDocumentLogos(profile, 'master_menu', plan);
+  const rowLabels = {
+    ...DEFAULT_MASTER_MENU_ROW_LABELS,
+    ...(plan.rowLabels || {}),
+  };
+
+  let cursorY = 8;
+
+  // Kop border box + Kop Header
+  const kopStartY = cursorY;
+  const kopEndY = drawBgnStandardKopHeader({
+    doc,
+    startX: marginX,
+    startY: kopStartY + 1,
+    width: contentWidth,
+    logoDataUrl: logos.leftUrl,
+    logoLeftWidthMm: logos.leftWidthMm,
+    logoRightDataUrl: logos.rightUrl,
+    logoRightWidthMm: logos.rightWidthMm,
+    line1: plan.headerLine1 || 'BADAN GIZI NASIONAL',
+    line2: plan.headerLine2 || 'SATUAN PELAYANAN PEMENUHAN GIZI',
+    line3: plan.headerLine3 || profile?.namaSppg || 'SPPG',
+    alamat: plan.headerAlamat || (profile?.alamat ? `Alamat : ${profile.alamat}` : 'Alamat : -'),
+  });
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.3);
+  doc.rect(marginX, kopStartY, contentWidth, kopEndY - kopStartY, 'S');
+  cursorY = kopEndY;
+
+  // Full-width Green Master Menu Banner (#00B050)
+  const bannerH = 8.5;
+  doc.setFillColor(0, 176, 80);
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.3);
+  doc.rect(marginX, cursorY, contentWidth, bannerH, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(orientation === 'landscape' ? 12.5 : 10.5);
+  doc.setTextColor(0, 0, 0);
+  doc.text((plan.title || 'MASTER MENU').toUpperCase(), pageWidth / 2, cursorY + 5.8, {
+    align: 'center',
+    maxWidth: contentWidth - 4,
+  });
+  cursorY += bannerH;
+
+  const labelColW = orientation === 'landscape' ? 46 : 32;
+  const dayColW = (contentWidth - labelColW) / 5;
+  const yellowBg: [number, number, number] = [255, 255, 0];
+  const greenBg: [number, number, number] = [0, 176, 80];
+
+  (plan.weeks || []).forEach((week, idx) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const startY = idx === 0 ? cursorY : ((doc as any).lastAutoTable?.finalY || cursorY);
+    const days = week.days || [];
+
+    const bodyRows: unknown[][] = [
+      [
+        { content: rowLabels.makananPokok, styles: { fontStyle: 'bold', halign: 'left' } },
+        ...days.map((d) => ({ content: d.makananPokok || '', styles: { fontStyle: 'bold', halign: 'center' } })),
+      ],
+      [
+        { content: rowLabels.laukHewani, styles: { fontStyle: 'bold', halign: 'left' } },
+        ...days.map((d) => ({ content: d.laukHewani || '', styles: { fontStyle: 'bold', halign: 'center' } })),
+      ],
+      [
+        { content: rowLabels.laukNabati, styles: { fontStyle: 'bold', halign: 'left' } },
+        ...days.map((d) => ({ content: d.laukNabati || '', styles: { fontStyle: 'bold', halign: 'center' } })),
+      ],
+      [
+        { content: rowLabels.sayuran, styles: { fontStyle: 'bold', halign: 'left' } },
+        ...days.map((d) => ({ content: d.sayuran || '', styles: { fontStyle: 'bold', halign: 'center' } })),
+      ],
+      [
+        { content: rowLabels.buah, styles: { fontStyle: 'bold', halign: 'left' } },
+        ...days.map((d) => ({ content: d.buah || '', styles: { fontStyle: 'bold', halign: 'center' } })),
+      ],
+      [
+        { content: rowLabels.susu, styles: { fontStyle: 'bold', halign: 'left' } },
+        ...days.map((d) => ({ content: d.susu || '', styles: { fontStyle: 'bold', halign: 'center' } })),
+      ],
+      [
+        {
+          content: week.weekLabel || `Minggu Ke- ${week.weekNumber}`,
+          styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' },
+        },
+        ...days.map((d) => ({
+          content: `MENU ${d.menuNumber}`,
+          styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' },
+        })),
+      ],
+    ];
+
+    autoTable(doc, {
+      startY,
+      margin: { left: marginX, right: marginX, top: 8, bottom: 10 },
+      theme: 'grid',
+      rowPageBreak: 'avoid',
+      styles: {
+        font: 'helvetica',
+        fontSize: orientation === 'landscape' ? 7.6 : 6.0,
+        textColor: [0, 0, 0],
+        lineColor: [0, 0, 0],
+        lineWidth: 0.25,
+        valign: 'middle',
+        cellPadding: { top: 1.0, right: 1.4, bottom: 1.0, left: 1.4 },
+        overflow: 'linebreak',
+      },
+      headStyles: {
+        fillColor: yellowBg,
+        textColor: [0, 0, 0],
+        fontStyle: 'bold',
+        halign: 'center',
+        valign: 'middle',
+        lineColor: [0, 0, 0],
+        lineWidth: 0.28,
+      },
+      head: [
+        [
+          rowLabels.kelompokHeader || 'Kelompok Bahan Makanan',
+          ...days.map((d) => d.dayLabel || formatIndonesianFullDate(d.dateIso)),
+        ],
+      ],
+      body: bodyRows as never[],
+      columnStyles: {
+        0: { cellWidth: labelColW },
+        1: { cellWidth: dayColW },
+        2: { cellWidth: dayColW },
+        3: { cellWidth: dayColW },
+        4: { cellWidth: dayColW },
+        5: { cellWidth: dayColW },
+      },
+    });
+  });
+
+  const safeTitle = (plan.title || 'MASTER_MENU')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_|_$/g, '');
+  doc.save(`MASTER_MENU_${safeTitle}_${plan.monthKey}.pdf`);
+}
+
 
 

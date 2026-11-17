@@ -42,6 +42,7 @@ import type {
   DailyPmRecord,
   FoodCostDayPlan,
   RawMaterialRecapDayConfig,
+  MasterMenuPlan,
 } from '../types';
 import {
   BGN_FREEZER_CHILLER_DEFAULTS,
@@ -49,6 +50,12 @@ import {
   SOP_BGN_ROOM_PRESETS,
 } from '../constants/temperatureStandards';
 import { getPeriodeLabel, INDONESIAN_MONTHS, parseMonthKey } from '../utils/dateUtils';
+import { normalizeLogoSettings } from '../utils/logoResolver';
+import {
+  DEFAULT_MASTER_MENU_ROW_LABELS,
+  formatMasterMenuDefaultTitle,
+  generateMasterMenuWeeks,
+} from '../utils/masterMenuHelper';
 import {
   createLocalFreezerMachine,
   createLocalTempRoom,
@@ -103,12 +110,21 @@ import {
   deleteLocalFoodCostDayPlan,
   subscribeLocalMonthPoRecaps,
   upsertLocalRawMaterialRecapDayConfig,
+  subscribeLocalMonthMasterMenus,
+  upsertLocalMasterMenuPlan,
+  deleteLocalMasterMenuPlan,
 } from './localSppgStore';
 
 export { LOCAL_WORKSPACE_UID };
 
 function clampString(val: string, max: number): string {
   return val.trim().slice(0, max);
+}
+
+function sanitizeLogoWidthPx(val: unknown, fallback = 56): number {
+  const n = typeof val === 'number' ? val : Number(val);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.max(20, Math.min(180, Math.round(n)));
 }
 
 function sanitizeNutritionValues(v: NutritionValues): NutritionValues {
@@ -135,6 +151,7 @@ export function getDefaultProfileDraft(uid: string, email: string): SppgUserProf
     provinsi: '',
     namaSppi: '',
     nomorHp: '',
+    logoSettings: normalizeLogoSettings(undefined),
   };
 }
 
@@ -177,6 +194,13 @@ export async function saveUserProfile(
   const path = `users/${uid}`;
   const ref = doc(db, 'users', uid);
 
+  const normalizedLogo = normalizeLogoSettings(input.logoSettings);
+  const logoSettings = {
+    ...normalizedLogo,
+    leftLogoDataUrl: (normalizedLogo.leftLogoDataUrl || '').slice(0, 200000),
+    rightLogoDataUrl: (normalizedLogo.rightLogoDataUrl || '').slice(0, 200000),
+  };
+
   const sanitized = {
     uid,
     email: clampString(email, 200),
@@ -188,6 +212,7 @@ export async function saveUserProfile(
     provinsi: clampString(input.provinsi.toUpperCase(), 100),
     namaSppi: clampString(input.namaSppi, 150),
     nomorHp: clampString(input.nomorHp, 30),
+    logoSettings,
   };
 
   try {
@@ -209,6 +234,7 @@ export async function saveUserProfile(
         provinsi: sanitized.provinsi,
         namaSppi: sanitized.namaSppi,
         nomorHp: sanitized.nomorHp,
+        logoSettings: sanitized.logoSettings,
         updatedAt: serverTimestamp(),
       });
     }
@@ -585,6 +611,11 @@ export function getDefaultSampleFormConfig(
     uid,
     monthKey,
     logoDataUrl: '',
+    logoWidthPx: 56,
+    logoRightDataUrl: '',
+    logoRightWidthPx: 56,
+    followGlobalLeftLogo: true,
+    followGlobalRightLogo: true,
     logoCaption: 'Badan Gizi Nasional',
     unitName: profile.namaSppg || 'SPPG',
     formLabel: 'FORM',
@@ -662,6 +693,11 @@ export async function saveSampleFormConfig(
     uid,
     monthKey,
     logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    logoWidthPx: sanitizeLogoWidthPx(input.logoWidthPx, 56),
+    logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    logoRightWidthPx: sanitizeLogoWidthPx(input.logoRightWidthPx, 56),
+    followGlobalLeftLogo: input.followGlobalLeftLogo !== false,
+    followGlobalRightLogo: input.followGlobalRightLogo !== false,
     logoCaption: clampString(input.logoCaption, 80),
     unitName: clampString(input.unitName, 150),
     formLabel: clampString(input.formLabel, 60),
@@ -704,6 +740,11 @@ export async function saveSampleFormConfig(
     } else {
       await updateDoc(formRef, {
         logoDataUrl: payloadData.logoDataUrl,
+        logoWidthPx: payloadData.logoWidthPx,
+        logoRightDataUrl: payloadData.logoRightDataUrl,
+        logoRightWidthPx: payloadData.logoRightWidthPx,
+        followGlobalLeftLogo: payloadData.followGlobalLeftLogo,
+        followGlobalRightLogo: payloadData.followGlobalRightLogo,
         logoCaption: payloadData.logoCaption,
         unitName: payloadData.unitName,
         formLabel: payloadData.formLabel,
@@ -876,6 +917,11 @@ export function getDefaultTempFormConfig(
     uid,
     monthKey,
     logoDataUrl: '',
+    logoWidthPx: 56,
+    logoRightDataUrl: '',
+    logoRightWidthPx: 56,
+    followGlobalLeftLogo: true,
+    followGlobalRightLogo: true,
     logoCaption: 'Badan Gizi Nasional',
     unitName: profile.namaSppg || 'SPPG',
     formLabel: 'FORM',
@@ -949,6 +995,11 @@ export async function saveTempFormConfig(
     uid,
     monthKey,
     logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    logoWidthPx: sanitizeLogoWidthPx(input.logoWidthPx, 56),
+    logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    logoRightWidthPx: sanitizeLogoWidthPx(input.logoRightWidthPx, 56),
+    followGlobalLeftLogo: input.followGlobalLeftLogo !== false,
+    followGlobalRightLogo: input.followGlobalRightLogo !== false,
     logoCaption: clampString(input.logoCaption, 80),
     unitName: clampString(input.unitName, 150),
     formLabel: clampString(input.formLabel, 60),
@@ -988,6 +1039,11 @@ export async function saveTempFormConfig(
     } else {
       await updateDoc(formRef, {
         logoDataUrl: payloadData.logoDataUrl,
+        logoWidthPx: payloadData.logoWidthPx,
+        logoRightDataUrl: payloadData.logoRightDataUrl,
+        logoRightWidthPx: payloadData.logoRightWidthPx,
+        followGlobalLeftLogo: payloadData.followGlobalLeftLogo,
+        followGlobalRightLogo: payloadData.followGlobalRightLogo,
         logoCaption: payloadData.logoCaption,
         unitName: payloadData.unitName,
         formLabel: payloadData.formLabel,
@@ -1373,6 +1429,11 @@ export function getDefaultFreezerFormConfig(
     uid,
     monthKey,
     logoDataUrl: '',
+    logoWidthPx: 56,
+    logoRightDataUrl: '',
+    logoRightWidthPx: 56,
+    followGlobalLeftLogo: true,
+    followGlobalRightLogo: true,
     logoCaption: 'Badan Gizi Nasional',
     unitName: profile.namaSppg || 'SPPG',
     formLabel: 'FORM',
@@ -1453,6 +1514,11 @@ export async function saveFreezerFormConfig(
     uid,
     monthKey,
     logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    logoWidthPx: sanitizeLogoWidthPx(input.logoWidthPx, 56),
+    logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    logoRightWidthPx: sanitizeLogoWidthPx(input.logoRightWidthPx, 56),
+    followGlobalLeftLogo: input.followGlobalLeftLogo !== false,
+    followGlobalRightLogo: input.followGlobalRightLogo !== false,
     logoCaption: clampString(input.logoCaption, 80),
     unitName: clampString(input.unitName, 150),
     formLabel: clampString(input.formLabel, 60),
@@ -1490,6 +1556,11 @@ export async function saveFreezerFormConfig(
     } else {
       await updateDoc(formRef, {
         logoDataUrl: payloadData.logoDataUrl,
+        logoWidthPx: payloadData.logoWidthPx,
+        logoRightDataUrl: payloadData.logoRightDataUrl,
+        logoRightWidthPx: payloadData.logoRightWidthPx,
+        followGlobalLeftLogo: payloadData.followGlobalLeftLogo,
+        followGlobalRightLogo: payloadData.followGlobalRightLogo,
         logoCaption: payloadData.logoCaption,
         unitName: payloadData.unitName,
         formLabel: payloadData.formLabel,
@@ -1892,7 +1963,11 @@ export function getDefaultFoodTempFormConfig(
     uid,
     monthKey,
     logoLeftDataUrl: '',
+    logoLeftWidthPx: 56,
     logoRightDataUrl: '',
+    logoRightWidthPx: 56,
+    followGlobalLeftLogo: true,
+    followGlobalRightLogo: true,
     headerLine1: 'BADAN GIZI NASIONAL',
     headerLine2: 'SATUAN PELAYANAN PEMENUHAN GIZI',
     headerLine3: defaultKabLine,
@@ -1969,7 +2044,11 @@ export async function saveFoodTempFormConfig(
     uid,
     monthKey,
     logoLeftDataUrl: (input.logoLeftDataUrl || '').slice(0, 200000),
+    logoLeftWidthPx: sanitizeLogoWidthPx(input.logoLeftWidthPx, 56),
     logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    logoRightWidthPx: sanitizeLogoWidthPx(input.logoRightWidthPx, 56),
+    followGlobalLeftLogo: input.followGlobalLeftLogo !== false,
+    followGlobalRightLogo: input.followGlobalRightLogo !== false,
     headerLine1: clampString(input.headerLine1, 120),
     headerLine2: clampString(input.headerLine2, 150),
     headerLine3: clampString(input.headerLine3, 150),
@@ -2296,6 +2375,11 @@ export function getDefaultDailyPmRecord(
     titleSpecific: 'UPDATE DATA SPESIFIK',
     titleSummary: 'UPDATE DATA PENERIMA MANFAAT',
     logoDataUrl: '',
+    logoWidthPx: 56,
+    logoRightDataUrl: '',
+    logoRightWidthPx: 56,
+    followGlobalLeftLogo: true,
+    followGlobalRightLogo: true,
     specificRows: [],
     summaryOverrides: {},
   };
@@ -2361,6 +2445,11 @@ export async function upsertDailyPmRecord(
     titleSpecific: clampString(input.titleSpecific || 'UPDATE DATA SPESIFIK', 120),
     titleSummary: clampString(input.titleSummary || 'UPDATE DATA PENERIMA MANFAAT', 120),
     logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    logoWidthPx: sanitizeLogoWidthPx(input.logoWidthPx, 56),
+    logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    logoRightWidthPx: sanitizeLogoWidthPx(input.logoRightWidthPx, 56),
+    followGlobalLeftLogo: input.followGlobalLeftLogo !== false,
+    followGlobalRightLogo: input.followGlobalRightLogo !== false,
     specificRows: (input.specificRows || []).slice(0, 200),
     summaryOverrides: input.summaryOverrides || {},
   };
@@ -2435,6 +2524,11 @@ export function getDefaultFoodCostDayPlan(
     headerLine3: profile.namaSppg || 'SPPG',
     headerAlamat: profile.alamat ? `Alamat : ${profile.alamat}` : 'Alamat : -',
     logoDataUrl: '',
+    logoWidthPx: 56,
+    logoRightDataUrl: '',
+    logoRightWidthPx: 56,
+    followGlobalLeftLogo: true,
+    followGlobalRightLogo: true,
     worksheets: [
       {
         id: `ws_${Date.now().toString(36)}_1`,
@@ -2508,6 +2602,11 @@ export async function upsertFoodCostDayPlan(
     headerLine3: clampString(input.headerLine3 || '', 150),
     headerAlamat: clampString(input.headerAlamat || '', 250),
     logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    logoWidthPx: sanitizeLogoWidthPx(input.logoWidthPx, 56),
+    logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    logoRightWidthPx: sanitizeLogoWidthPx(input.logoRightWidthPx, 56),
+    followGlobalLeftLogo: input.followGlobalLeftLogo !== false,
+    followGlobalRightLogo: input.followGlobalRightLogo !== false,
     worksheets: (input.worksheets || []).slice(0, 30),
   };
 
@@ -2581,6 +2680,11 @@ export function getDefaultRawMaterialRecapDayConfig(
     headerLine3: profile.namaSppg || 'SPPG',
     headerAlamat: profile.alamat ? `Alamat : ${profile.alamat}` : 'Alamat : -',
     logoDataUrl: '',
+    logoWidthPx: 56,
+    logoRightDataUrl: '',
+    logoRightWidthPx: 56,
+    followGlobalLeftLogo: true,
+    followGlobalRightLogo: true,
     recapTitle: 'REKAPAN TOTAL KEBUTUHAN BAHAN BAKU KESELURUHAN',
     sideLabel: 'REKAPAN / PO',
     bufferPercent: 2.5,
@@ -2659,6 +2763,11 @@ export async function upsertRawMaterialRecapDayConfig(
     headerLine3: clampString(input.headerLine3 || '', 150),
     headerAlamat: clampString(input.headerAlamat || '', 250),
     logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    logoWidthPx: sanitizeLogoWidthPx(input.logoWidthPx, 56),
+    logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    logoRightWidthPx: sanitizeLogoWidthPx(input.logoRightWidthPx, 56),
+    followGlobalLeftLogo: input.followGlobalLeftLogo !== false,
+    followGlobalRightLogo: input.followGlobalRightLogo !== false,
     recapTitle: clampString(
       input.recapTitle || 'REKAPAN TOTAL KEBUTUHAN BAHAN BAKU KESELURUHAN',
       150
@@ -2712,6 +2821,179 @@ export async function upsertRawMaterialRecapDayConfig(
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+// --- Master Menu (1-4 Minggu / Bulanan) ---
+
+export function getDefaultMasterMenuPlan(
+  uid: string,
+  monthKey: string,
+  profile: SppgUserProfile,
+  categoryIds: TargetCategoryId[] = ['sd_1_3'],
+  cycleMode: MasterMenuPlan['cycleMode'] = '4_minggu'
+): MasterMenuPlan {
+  return {
+    id: `mm_draft_${monthKey}`,
+    uid,
+    monthKey,
+    title: formatMasterMenuDefaultTitle(categoryIds, cycleMode, monthKey),
+    categoryIds,
+    cycleMode,
+    headerLine1: 'BADAN GIZI NASIONAL',
+    headerLine2: 'SATUAN PELAYANAN PEMENUHAN GIZI',
+    headerLine3: profile.namaSppg || 'SPPG',
+    headerAlamat: profile.alamat ? `Alamat : ${profile.alamat}` : 'Alamat : -',
+    logoDataUrl: '',
+    logoWidthPx: 56,
+    logoRightDataUrl: '',
+    logoRightWidthPx: 56,
+    followGlobalLeftLogo: true,
+    followGlobalRightLogo: true,
+    rowLabels: { ...DEFAULT_MASTER_MENU_ROW_LABELS },
+    weeks: generateMasterMenuWeeks(monthKey, cycleMode),
+  };
+}
+
+export function subscribeMonthMasterMenus(
+  uid: string,
+  monthKey: string,
+  onData: (plans: MasterMenuPlan[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalMonthMasterMenus(monthKey, onData);
+  }
+  const path = `users/${uid}/months/${monthKey}/masterMenus`;
+  const q = query(
+    collection(db, 'users', uid, 'months', monthKey, 'masterMenus'),
+    where('uid', '==', uid)
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list: MasterMenuPlan[] = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<MasterMenuPlan, 'id'>),
+      }));
+      list.sort((a, b) => a.title.localeCompare(b.title));
+      onData(list);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch (wrapped) {
+        onError?.(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+export async function upsertMasterMenuPlan(
+  uid: string,
+  monthKey: string,
+  input: Omit<MasterMenuPlan, 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'> & { id?: string }
+): Promise<string> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return upsertLocalMasterMenuPlan(monthKey, input);
+  }
+  const planId =
+    input.id && !input.id.startsWith('mm_draft_')
+      ? input.id
+      : `mm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const path = `users/${uid}/months/${monthKey}/masterMenus/${planId}`;
+  const monthRef = doc(db, 'users', uid, 'months', monthKey);
+  const ref = doc(db, 'users', uid, 'months', monthKey, 'masterMenus', planId);
+  const { year, month } = parseMonthKey(monthKey);
+  const monthPeriodeLabel = getPeriodeLabel(year, month, true);
+
+  const cycleMode = input.cycleMode || '4_minggu';
+  const categoryIds: TargetCategoryId[] =
+    input.categoryIds && input.categoryIds.length > 0 ? input.categoryIds : ['sd_1_3'];
+
+  const rl = input.rowLabels || DEFAULT_MASTER_MENU_ROW_LABELS;
+  const clean = {
+    uid,
+    monthKey,
+    title: clampString(
+      input.title || formatMasterMenuDefaultTitle(categoryIds, cycleMode, monthKey),
+      160
+    ),
+    categoryIds: categoryIds.slice(0, 20),
+    cycleMode,
+    headerLine1: clampString(input.headerLine1 || 'BADAN GIZI NASIONAL', 120),
+    headerLine2: clampString(input.headerLine2 || 'SATUAN PELAYANAN PEMENUHAN GIZI', 150),
+    headerLine3: clampString(input.headerLine3 || '', 150),
+    headerAlamat: clampString(input.headerAlamat || '', 250),
+    logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    logoWidthPx: sanitizeLogoWidthPx(input.logoWidthPx, 56),
+    logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    logoRightWidthPx: sanitizeLogoWidthPx(input.logoRightWidthPx, 56),
+    followGlobalLeftLogo: input.followGlobalLeftLogo !== false,
+    followGlobalRightLogo: input.followGlobalRightLogo !== false,
+    rowLabels: {
+      kelompokHeader: clampString(rl.kelompokHeader || 'Kelompok Bahan Makanan', 60),
+      makananPokok: clampString(rl.makananPokok || 'Makanan Pokok', 40),
+      laukHewani: clampString(rl.laukHewani || 'Lauk Hewani', 40),
+      laukNabati: clampString(rl.laukNabati || 'Lauk Nabati', 40),
+      sayuran: clampString(rl.sayuran || 'Sayuran', 40),
+      buah: clampString(rl.buah || 'Buah', 40),
+      susu: clampString(rl.susu || 'Susu', 40),
+    },
+    weeks:
+      input.weeks && input.weeks.length > 0
+        ? input.weeks.slice(0, 6)
+        : generateMasterMenuWeeks(monthKey, cycleMode),
+  };
+
+  try {
+    const [monthSnap, docSnap] = await Promise.all([getDoc(monthRef), getDoc(ref)]);
+    if (!docSnap.exists()) {
+      const batch = writeBatch(db);
+      if (!monthSnap.exists()) {
+        batch.set(monthRef, {
+          uid,
+          monthKey,
+          year,
+          month,
+          periodeLabel: monthPeriodeLabel,
+          entryCount: 0,
+          photoCount: 0,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      batch.set(ref, {
+        ...clean,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+    } else {
+      await updateDoc(ref, {
+        ...clean,
+        updatedAt: serverTimestamp(),
+      });
+    }
+    return planId;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteMasterMenuPlan(
+  uid: string,
+  monthKey: string,
+  planId: string
+): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return deleteLocalMasterMenuPlan(monthKey, planId);
+  }
+  const path = `users/${uid}/months/${monthKey}/masterMenus/${planId}`;
+  try {
+    await deleteDoc(doc(db, 'users', uid, 'months', monthKey, 'masterMenus', planId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
 

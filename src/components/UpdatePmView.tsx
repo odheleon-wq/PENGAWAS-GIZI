@@ -21,6 +21,8 @@ import type {
 } from '../types';
 import { formatIndonesianFullDate, getTodayIso } from '../utils/dateUtils';
 import { computePmSummary } from '../utils/foodCostCalculator';
+import { resolveDocumentLogos } from '../utils/logoResolver';
+import { LogoUploadModal } from './LogoUploadModal';
 
 interface UpdatePmViewProps {
   uid: string;
@@ -33,6 +35,7 @@ interface UpdatePmViewProps {
   onSaveRecord: (
     record: Omit<DailyPmRecord, 'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
   ) => Promise<void>;
+  onSyncGlobalLeftLogo?: (dataUrl: string, widthPx: number) => Promise<void>;
   onExportPdf: (record: DailyPmRecord, viewMode: 'specific' | 'summary' | 'both') => void;
 }
 
@@ -68,11 +71,13 @@ export const UpdatePmView: React.FC<UpdatePmViewProps> = ({
   activeDateIso,
   onChangeDateIso,
   onSaveRecord,
+  onSyncGlobalLeftLogo,
   onExportPdf,
 }) => {
   const [subView, setSubView] = useState<'specific' | 'summary' | 'both'>('specific');
   const [showHeaderEdit, setShowHeaderEdit] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [logoModalSide, setLogoModalSide] = useState<'left' | 'right' | null>(null);
 
   const matchedEntry = useMemo(
     () => entries.find((e) => e.dateIso === activeDateIso) || null,
@@ -113,6 +118,11 @@ export const UpdatePmView: React.FC<UpdatePmViewProps> = ({
 
   const pmSummary = useMemo(() => computePmSummary(draft), [draft]);
 
+  const resolvedLogos = useMemo(
+    () => resolveDocumentLogos(profile, 'update_pm', draft),
+    [profile, draft]
+  );
+
   const latestOtherRecord = useMemo(() => {
     const others = pmRecords.filter(
       (r) => r.dateIso !== activeDateIso && (r.specificRows.length > 0 || Object.keys(r.summaryOverrides || {}).length > 0)
@@ -134,6 +144,11 @@ export const UpdatePmView: React.FC<UpdatePmViewProps> = ({
         titleSpecific: next.titleSpecific,
         titleSummary: next.titleSummary,
         logoDataUrl: next.logoDataUrl,
+        logoWidthPx: next.logoWidthPx,
+        logoRightDataUrl: next.logoRightDataUrl,
+        logoRightWidthPx: next.logoRightWidthPx,
+        followGlobalLeftLogo: next.followGlobalLeftLogo,
+        followGlobalRightLogo: next.followGlobalRightLogo,
         specificRows: next.specificRows,
         summaryOverrides: next.summaryOverrides,
       });
@@ -226,17 +241,33 @@ export const UpdatePmView: React.FC<UpdatePmViewProps> = ({
     void persistDraft(next);
   };
 
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        void persistDraft({ ...draft, logoDataUrl: reader.result });
+  const handleApplyLogoModal = async ({
+    dataUrl,
+    widthPx,
+    syncAsGlobalBgn,
+  }: {
+    dataUrl: string;
+    widthPx: number;
+    syncAsGlobalBgn?: boolean;
+  }) => {
+    if (logoModalSide === 'left') {
+      if (syncAsGlobalBgn && onSyncGlobalLeftLogo) {
+        await onSyncGlobalLeftLogo(dataUrl, widthPx);
       }
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
+      await persistDraft({
+        ...draft,
+        logoDataUrl: dataUrl,
+        logoWidthPx: widthPx,
+        followGlobalLeftLogo: syncAsGlobalBgn ? true : false,
+      });
+    } else if (logoModalSide === 'right') {
+      await persistDraft({
+        ...draft,
+        logoRightDataUrl: dataUrl,
+        logoRightWidthPx: widthPx,
+        followGlobalRightLogo: false,
+      });
+    }
   };
 
   const specTotals = useMemo(() => {
@@ -424,18 +455,50 @@ export const UpdatePmView: React.FC<UpdatePmViewProps> = ({
             </div>
             <div>
               <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                Logo BGN / SPPG
+                Pengaturan Logo Kiri &amp; Kanan
               </label>
-              <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
-                <Upload className="h-3.5 w-3.5 text-emerald-600" />
-                Unggah Logo
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleLogoUpload}
-                  className="hidden"
-                />
-              </label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setLogoModalSide('left')}
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  <Upload className="h-3 w-3 text-emerald-600" />
+                  Kiri ({resolvedLogos.leftWidthPx}px)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLogoModalSide('right')}
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  <Upload className="h-3 w-3 text-blue-600" />
+                  Kanan ({resolvedLogos.rightWidthPx}px)
+                </button>
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-3 text-[11px] text-slate-600">
+                <label className="inline-flex items-center gap-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={draft.followGlobalLeftLogo !== false}
+                    onChange={(e) =>
+                      void persistDraft({ ...draft, followGlobalLeftLogo: e.target.checked })
+                    }
+                    className="rounded accent-emerald-600"
+                  />
+                  Ikuti BGN Global
+                </label>
+                <label className="inline-flex items-center gap-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={draft.followGlobalRightLogo !== false}
+                    onChange={(e) =>
+                      void persistDraft({ ...draft, followGlobalRightLogo: e.target.checked })
+                    }
+                    className="rounded accent-blue-600"
+                  />
+                  Ikuti Kanan Global
+                </label>
+              </div>
             </div>
             <div>
               <label className="block text-[11px] font-medium text-slate-600 mb-1">
@@ -476,28 +539,39 @@ export const UpdatePmView: React.FC<UpdatePmViewProps> = ({
       {(subView === 'specific' || subView === 'both') && (
         <div className="rounded-xl border border-slate-300 bg-white overflow-hidden shadow-xs">
           {/* Kop */}
-          <div className="relative border-b border-black px-4 py-3 text-center">
-            {draft.logoDataUrl && (
+          <div className="relative border-b border-black px-4 py-3 text-center min-h-[82px] flex flex-col justify-center">
+            {resolvedLogos.leftUrl && (
               <img
-                src={draft.logoDataUrl}
+                src={resolvedLogos.leftUrl}
                 alt="Logo BGN"
-                className="absolute left-4 top-3 h-14 w-14 object-contain"
+                style={{ width: `${resolvedLogos.leftWidthPx}px`, height: 'auto', maxHeight: '76px' }}
+                className="absolute left-4 top-1/2 -translate-y-1/2 object-contain"
               />
             )}
-            <div className="text-xs font-bold uppercase tracking-wide text-black">
-              {draft.headerLine1}
-            </div>
-            <div className="text-xs font-bold uppercase tracking-wide text-black">
-              {draft.headerLine2}
-            </div>
-            <div className="text-xs font-bold uppercase tracking-wide text-black">
-              {draft.headerLine3}
-            </div>
-            <div className="mt-0.5 text-[11px] italic underline text-black">
-              {draft.headerAlamat}
-            </div>
-            <div className="mt-2 text-base font-extrabold uppercase tracking-wide text-black">
-              {draft.titleSpecific}
+            {resolvedLogos.rightUrl && (
+              <img
+                src={resolvedLogos.rightUrl}
+                alt="Logo Kanan"
+                style={{ width: `${resolvedLogos.rightWidthPx}px`, height: 'auto', maxHeight: '76px' }}
+                className="absolute right-4 top-1/2 -translate-y-1/2 object-contain"
+              />
+            )}
+            <div className="px-20">
+              <div className="text-xs font-bold uppercase tracking-wide text-black">
+                {draft.headerLine1}
+              </div>
+              <div className="text-xs font-bold uppercase tracking-wide text-black">
+                {draft.headerLine2}
+              </div>
+              <div className="text-xs font-bold uppercase tracking-wide text-black">
+                {draft.headerLine3}
+              </div>
+              <div className="mt-0.5 text-[11px] italic underline text-black">
+                {draft.headerAlamat}
+              </div>
+              <div className="mt-2 text-base font-extrabold uppercase tracking-wide text-black">
+                {draft.titleSpecific}
+              </div>
             </div>
           </div>
 
@@ -804,28 +878,39 @@ export const UpdatePmView: React.FC<UpdatePmViewProps> = ({
       {/* SHEET 2: UPDATE DATA PENERIMA MANFAAT (13 Groups - Image 4) */}
       {(subView === 'summary' || subView === 'both') && (
         <div className="rounded-xl border border-slate-300 bg-white overflow-hidden shadow-xs">
-          <div className="relative border-b border-black px-4 py-3 text-center">
-            {draft.logoDataUrl && (
+          <div className="relative border-b border-black px-4 py-3 text-center min-h-[82px] flex flex-col justify-center">
+            {resolvedLogos.leftUrl && (
               <img
-                src={draft.logoDataUrl}
+                src={resolvedLogos.leftUrl}
                 alt="Logo BGN"
-                className="absolute left-4 top-3 h-14 w-14 object-contain"
+                style={{ width: `${resolvedLogos.leftWidthPx}px`, height: 'auto', maxHeight: '76px' }}
+                className="absolute left-4 top-1/2 -translate-y-1/2 object-contain"
               />
             )}
-            <div className="text-xs font-bold uppercase tracking-wide text-black">
-              {draft.headerLine1}
-            </div>
-            <div className="text-xs font-bold uppercase tracking-wide text-black">
-              {draft.headerLine2}
-            </div>
-            <div className="text-xs font-bold uppercase tracking-wide text-black">
-              {draft.headerLine3}
-            </div>
-            <div className="mt-0.5 text-[11px] italic underline text-black">
-              {draft.headerAlamat}
-            </div>
-            <div className="mt-2 text-base font-extrabold uppercase tracking-wide text-black">
-              {draft.titleSummary}
+            {resolvedLogos.rightUrl && (
+              <img
+                src={resolvedLogos.rightUrl}
+                alt="Logo Kanan"
+                style={{ width: `${resolvedLogos.rightWidthPx}px`, height: 'auto', maxHeight: '76px' }}
+                className="absolute right-4 top-1/2 -translate-y-1/2 object-contain"
+              />
+            )}
+            <div className="px-20">
+              <div className="text-xs font-bold uppercase tracking-wide text-black">
+                {draft.headerLine1}
+              </div>
+              <div className="text-xs font-bold uppercase tracking-wide text-black">
+                {draft.headerLine2}
+              </div>
+              <div className="text-xs font-bold uppercase tracking-wide text-black">
+                {draft.headerLine3}
+              </div>
+              <div className="mt-0.5 text-[11px] italic underline text-black">
+                {draft.headerAlamat}
+              </div>
+              <div className="mt-2 text-base font-extrabold uppercase tracking-wide text-black">
+                {draft.titleSummary}
+              </div>
             </div>
           </div>
 
@@ -1071,6 +1156,28 @@ export const UpdatePmView: React.FC<UpdatePmViewProps> = ({
           </div>
         </div>
       )}
+
+      <LogoUploadModal
+        open={logoModalSide !== null}
+        title={
+          logoModalSide === 'left'
+            ? 'Atur Logo Kiri (BGN) — Update PM'
+            : 'Atur Logo Kanan — Update PM'
+        }
+        side={logoModalSide || 'left'}
+        initialDataUrl={
+          logoModalSide === 'left' ? resolvedLogos.leftUrl : resolvedLogos.rightUrl
+        }
+        initialWidthPx={
+          logoModalSide === 'left' ? resolvedLogos.leftWidthPx : resolvedLogos.rightWidthPx
+        }
+        headerLine1={draft.headerLine1}
+        headerLine2={draft.headerLine2}
+        headerLine3={draft.headerLine3}
+        allowSyncGlobal={Boolean(onSyncGlobalLeftLogo)}
+        onClose={() => setLogoModalSide(null)}
+        onApply={handleApplyLogoModal}
+      />
     </div>
   );
 };

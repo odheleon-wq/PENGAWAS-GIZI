@@ -24,7 +24,9 @@ import type {
   SppgUserProfile,
 } from '../types';
 import { formatIndonesianFullDate } from '../utils/dateUtils';
+import { resolveDocumentLogos } from '../utils/logoResolver';
 import { exportFoodTemperatureToF4Pdf } from '../utils/pdfExporter';
+import { LogoUploadModal } from './LogoUploadModal';
 
 interface LaporanSuhuMakananViewProps {
   profile: SppgUserProfile;
@@ -44,6 +46,7 @@ interface LaporanSuhuMakananViewProps {
   ) => Promise<string | void>;
   onDeleteBlock: (blockId: string) => Promise<void>;
   onSeedDefaultBlocks: (sheetType: FoodTempSheetType, count?: number) => Promise<void>;
+  onSyncGlobalLeftLogo?: (dataUrl: string, widthPx: number) => Promise<void>;
 }
 
 type ViewMode = 'both' | 'masak' | 'ompreng';
@@ -67,6 +70,7 @@ function isFoodTempWarning(rawSuhu: string, sheetType: FoodTempSheetType): boole
 }
 
 export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
+  profile,
   monthKey,
   config,
   blocks,
@@ -77,18 +81,18 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
   onSaveBlock,
   onDeleteBlock,
   onSeedDefaultBlocks,
+  onSyncGlobalLeftLogo,
 }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('both');
   const [showFormatEditor, setShowFormatEditor] = useState(false);
   const [draftConfig, setDraftConfig] = useState<FoodTempFormConfig>(config);
   const [savingConfig, setSavingConfig] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
+  const [logoModalSide, setLogoModalSide] = useState<'left' | 'right' | null>(null);
 
   const [localBlocks, setLocalBlocks] = useState<Record<string, FoodTempDayBlock>>({});
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
-  const leftLogoRef = useRef<HTMLInputElement | null>(null);
-  const rightLogoRef = useRef<HTMLInputElement | null>(null);
   const seededMonthsRef = useRef<Set<string>>(new Set());
 
   // Auto-seed 5 default date blocks (each 5 food rows) for both Masak & Masuk Ompreng matching image_019d0cdc.png
@@ -156,34 +160,36 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
     [localBlocks]
   );
 
-  const handleLogoUpload = (
-    e: React.ChangeEvent<HTMLInputElement>,
-    side: 'logoLeftDataUrl' | 'logoRightDataUrl'
-  ) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result !== 'string') return;
-      const img = new Image();
-      img.onload = () => {
-        const maxDim = 180;
-        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-        const cw = Math.max(1, Math.round(img.width * scale));
-        const ch = Math.max(1, Math.round(img.height * scale));
-        const canvas = document.createElement('canvas');
-        canvas.width = cw;
-        canvas.height = ch;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.drawImage(img, 0, 0, cw, ch);
-        const compressed = canvas.toDataURL('image/png');
-        setDraftConfig((prev) => ({ ...prev, [side]: compressed }));
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
+  const draftLogos = resolveDocumentLogos(profile, 'makanan', draftConfig);
+  const displayLogos = resolveDocumentLogos(profile, 'makanan', config);
+
+  const handleApplyLogoModal = async ({
+    dataUrl,
+    widthPx,
+    syncAsGlobalBgn,
+  }: {
+    dataUrl: string;
+    widthPx: number;
+    syncAsGlobalBgn?: boolean;
+  }) => {
+    if (logoModalSide === 'left') {
+      if (syncAsGlobalBgn && onSyncGlobalLeftLogo) {
+        await onSyncGlobalLeftLogo(dataUrl, widthPx);
+      }
+      setDraftConfig((prev) => ({
+        ...prev,
+        logoLeftDataUrl: dataUrl,
+        logoLeftWidthPx: widthPx,
+        followGlobalLeftLogo: syncAsGlobalBgn ? true : false,
+      }));
+    } else if (logoModalSide === 'right') {
+      setDraftConfig((prev) => ({
+        ...prev,
+        logoRightDataUrl: dataUrl,
+        logoRightWidthPx: widthPx,
+        followGlobalRightLogo: false,
+      }));
+    }
   };
 
   const handleSaveFormatSubmit = async (e: React.FormEvent) => {
@@ -193,7 +199,11 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
     try {
       await onSaveConfig({
         logoLeftDataUrl: draftConfig.logoLeftDataUrl || '',
+        logoLeftWidthPx: draftConfig.logoLeftWidthPx || 56,
         logoRightDataUrl: draftConfig.logoRightDataUrl || '',
+        logoRightWidthPx: draftConfig.logoRightWidthPx || 56,
+        followGlobalLeftLogo: draftConfig.followGlobalLeftLogo !== false,
+        followGlobalRightLogo: draftConfig.followGlobalRightLogo !== false,
         headerLine1: draftConfig.headerLine1,
         headerLine2: draftConfig.headerLine2,
         headerLine3: draftConfig.headerLine3,
@@ -374,13 +384,19 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
     setTimeout(() => setSyncNotice(null), 3500);
   };
 
-  const renderKopLogo = (dataUrl?: string, fallbackText = 'BGN', accent = 'blue') => {
+  const renderKopLogo = (
+    dataUrl?: string,
+    fallbackText = 'BGN',
+    accent = 'blue',
+    widthPx = 56
+  ) => {
     if (dataUrl) {
       return (
         <img
           src={dataUrl}
           alt={fallbackText}
-          className="h-14 w-14 object-contain mx-auto"
+          style={{ width: `${widthPx}px`, height: 'auto', maxHeight: '72px' }}
+          className="object-contain mx-auto"
         />
       );
     }
@@ -444,6 +460,7 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
               onClick={() =>
                 exportFoodTemperatureToF4Pdf({
                   config,
+                  profile,
                   blocks: Object.values(localBlocks),
                   sheetsToExport: [sheetType],
                   orientation: pdfOrientation,
@@ -461,8 +478,10 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
         <div className="overflow-x-auto p-4 sm:p-6">
           <div className="min-w-[540px] bg-white text-black">
             {/* Official Kop Surat (Left Logo, 4-Line Center Text, Right Logo) */}
-            <div className="grid grid-cols-[68px_1fr_68px] items-center gap-2 pb-2">
-              <div>{renderKopLogo(config.logoLeftDataUrl, 'BGN', 'blue')}</div>
+            <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 pb-2">
+              <div className="min-w-[68px] flex justify-center">
+                {renderKopLogo(displayLogos.leftUrl, 'BGN', 'blue', displayLogos.leftWidthPx)}
+              </div>
               <div className="text-center leading-tight">
                 <div className="text-[13px] font-bold tracking-wide text-slate-800 uppercase">
                   {config.headerLine1}
@@ -477,7 +496,9 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
                   {config.headerLine4}
                 </div>
               </div>
-              <div>{renderKopLogo(config.logoRightDataUrl, 'SPPG', 'green')}</div>
+              <div className="min-w-[68px] flex justify-center">
+                {renderKopLogo(displayLogos.rightUrl, 'SPPG', 'green', displayLogos.rightWidthPx)}
+              </div>
             </div>
 
             {/* Double Horizontal Kop Divider */}
@@ -757,6 +778,7 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
             onClick={() =>
               exportFoodTemperatureToF4Pdf({
                 config,
+                profile,
                 blocks: Object.values(localBlocks),
                 sheetsToExport: ['masak', 'ompreng'],
                 orientation: pdfOrientation,
@@ -948,73 +970,60 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
                 </div>
               </div>
 
-              {/* Dual Logo Uploads */}
-              <div className="grid grid-cols-2 gap-3 pt-1">
-                <div>
-                  <span className="block text-xs font-medium text-slate-700 mb-1">
-                    Logo Kiri (BGN)
-                  </span>
-                  <input
-                    ref={leftLogoRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => handleLogoUpload(e, 'logoLeftDataUrl')}
-                    className="hidden"
-                  />
-                  <div className="flex items-center gap-2">
+              {/* Dual Logo Uploads via LogoUploadModal */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-slate-700">
+                      Logo Kiri (BGN · {draftLogos.leftWidthPx}px)
+                    </span>
                     <button
                       type="button"
-                      onClick={() => leftLogoRef.current?.click()}
-                      className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      onClick={() => setLogoModalSide('left')}
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
                     >
-                      <Upload className="h-3 w-3" />
-                      Unggah
+                      <Upload className="h-3 w-3 text-emerald-600" />
+                      Atur Logo Kiri
                     </button>
-                    {draftConfig.logoLeftDataUrl && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setDraftConfig((p) => ({ ...p, logoLeftDataUrl: '' }))
-                        }
-                        className="text-xs text-red-600 hover:underline"
-                      >
-                        Reset
-                      </button>
-                    )}
                   </div>
+                  <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={draftConfig.followGlobalLeftLogo !== false}
+                      onChange={(e) =>
+                        setDraftConfig((p) => ({ ...p, followGlobalLeftLogo: e.target.checked }))
+                      }
+                      className="rounded accent-emerald-600"
+                    />
+                    Ikuti Logo BGN Global
+                  </label>
                 </div>
-                <div>
-                  <span className="block text-xs font-medium text-slate-700 mb-1">
-                    Logo Kanan (SPPG)
-                  </span>
-                  <input
-                    ref={rightLogoRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => handleLogoUpload(e, 'logoRightDataUrl')}
-                    className="hidden"
-                  />
-                  <div className="flex items-center gap-2">
+
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-slate-700">
+                      Logo Kanan (SPPG · {draftLogos.rightWidthPx}px)
+                    </span>
                     <button
                       type="button"
-                      onClick={() => rightLogoRef.current?.click()}
-                      className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      onClick={() => setLogoModalSide('right')}
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
                     >
-                      <Upload className="h-3 w-3" />
-                      Unggah
+                      <Upload className="h-3 w-3 text-blue-600" />
+                      Atur Logo Kanan
                     </button>
-                    {draftConfig.logoRightDataUrl && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setDraftConfig((p) => ({ ...p, logoRightDataUrl: '' }))
-                        }
-                        className="text-xs text-red-600 hover:underline"
-                      >
-                        Reset
-                      </button>
-                    )}
                   </div>
+                  <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={draftConfig.followGlobalRightLogo !== false}
+                      onChange={(e) =>
+                        setDraftConfig((p) => ({ ...p, followGlobalRightLogo: e.target.checked }))
+                      }
+                      className="rounded accent-blue-600"
+                    />
+                    Ikuti Logo Kanan Global
+                  </label>
                 </div>
               </div>
             </div>
@@ -1122,6 +1131,25 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
         <span className="font-semibold text-slate-800">Acuan Suhu Keamanan Pangan BGN:</span>{' '}
         Makanan matang (pemasakan inti) dianjurkan <span className="font-mono-num font-semibold text-slate-900">≥ 65°C – 85°C</span>, dan suhu makanan saat masuk ompreng / siap distribusi panas dijaga <span className="font-mono-num font-semibold text-slate-900">≥ 60°C</span> untuk menghindari zona bahaya pertumbuhan bakteri (5°C – 60°C). Nilai suhu di bawah ambang otomatis ditandai kuning untuk pengecekan ulang.
       </div>
+
+      <LogoUploadModal
+        open={logoModalSide !== null}
+        side={logoModalSide || 'left'}
+        title={
+          logoModalSide === 'left'
+            ? 'Upload & Atur Ukuran Logo Kiri (BGN)'
+            : 'Upload & Atur Ukuran Logo Kanan (SPPG/Mitra)'
+        }
+        initialDataUrl={
+          logoModalSide === 'left'
+            ? draftConfig.logoLeftDataUrl || draftLogos.leftUrl
+            : draftConfig.logoRightDataUrl || draftLogos.rightUrl
+        }
+        initialWidthPx={logoModalSide === 'left' ? draftLogos.leftWidthPx : draftLogos.rightWidthPx}
+        allowSyncGlobal={Boolean(onSyncGlobalLeftLogo)}
+        onClose={() => setLogoModalSide(null)}
+        onApply={handleApplyLogoModal}
+      />
     </div>
   );
 };

@@ -29,6 +29,10 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isValidLogoWidth(w) {
+      return (w is int || w is float) && w >= 20 && w <= 180;
+    }
+
     // --- Validation Blueprints ---
     function isValidUserProfile(data) {
       return data.keys().hasAll([
@@ -39,7 +43,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'uid', 'email', 'reportTitle', 'namaSppg', 'idSppg',
           'alamat', 'kabKota', 'provinsi', 'namaSppi', 'nomorHp',
-          'createdAt', 'updatedAt'
+          'logoSettings', 'createdAt', 'updatedAt'
         ])
         && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
         && data.email is string && data.email.size() >= 3 && data.email.size() <= 200
@@ -51,6 +55,7 @@ service cloud.firestore {
         && data.provinsi is string && data.provinsi.size() <= 100
         && data.namaSppi is string && data.namaSppi.size() <= 150
         && data.nomorHp is string && data.nomorHp.size() <= 30
+        && (!('logoSettings' in data) || (data.logoSettings is map && data.logoSettings.size() <= 16))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -115,13 +120,20 @@ service cloud.firestore {
           'verifierLine1', 'verifierLine2', 'verifierName', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'uid', 'monthKey', 'logoDataUrl', 'logoCaption', 'unitName', 'formLabel', 'formTitle',
+          'uid', 'monthKey', 'logoDataUrl', 'logoWidthPx', 'logoRightDataUrl', 'logoRightWidthPx',
+          'followGlobalLeftLogo', 'followGlobalRightLogo',
+          'logoCaption', 'unitName', 'formLabel', 'formTitle',
           'docNumber', 'revision', 'effectiveDate', 'bulanLabel', 'tahunLabel',
           'colLabels', 'verifierLine1', 'verifierLine2', 'verifierName', 'createdAt', 'updatedAt'
         ])
         && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
         && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
         && (!('logoDataUrl' in data) || (data.logoDataUrl is string && data.logoDataUrl.size() <= 200000))
+        && (!('logoWidthPx' in data) || isValidLogoWidth(data.logoWidthPx))
+        && (!('logoRightDataUrl' in data) || (data.logoRightDataUrl is string && data.logoRightDataUrl.size() <= 200000))
+        && (!('logoRightWidthPx' in data) || isValidLogoWidth(data.logoRightWidthPx))
+        && (!('followGlobalLeftLogo' in data) || data.followGlobalLeftLogo is bool)
+        && (!('followGlobalRightLogo' in data) || data.followGlobalRightLogo is bool)
         && data.logoCaption is string && data.logoCaption.size() <= 80
         && data.unitName is string && data.unitName.size() <= 150
         && data.formLabel is string && data.formLabel.size() <= 60
@@ -173,13 +185,20 @@ service cloud.firestore {
           'sopTitle', 'sopSubtitle', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'uid', 'monthKey', 'logoDataUrl', 'logoCaption', 'unitName', 'formLabel', 'formTitle',
+          'uid', 'monthKey', 'logoDataUrl', 'logoWidthPx', 'logoRightDataUrl', 'logoRightWidthPx',
+          'followGlobalLeftLogo', 'followGlobalRightLogo',
+          'logoCaption', 'unitName', 'formLabel', 'formTitle',
           'docNumber', 'revision', 'effectiveDate', 'periodeLabel', 'tableLabels',
           'sopTitle', 'sopSubtitle', 'createdAt', 'updatedAt'
         ])
         && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
         && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
         && (!('logoDataUrl' in data) || (data.logoDataUrl is string && data.logoDataUrl.size() <= 200000))
+        && (!('logoWidthPx' in data) || isValidLogoWidth(data.logoWidthPx))
+        && (!('logoRightDataUrl' in data) || (data.logoRightDataUrl is string && data.logoRightDataUrl.size() <= 200000))
+        && (!('logoRightWidthPx' in data) || isValidLogoWidth(data.logoRightWidthPx))
+        && (!('followGlobalLeftLogo' in data) || data.followGlobalLeftLogo is bool)
+        && (!('followGlobalRightLogo' in data) || data.followGlobalRightLogo is bool)
         && data.logoCaption is string && data.logoCaption.size() <= 80
         && data.unitName is string && data.unitName.size() <= 150
         && data.formLabel is string && data.formLabel.size() <= 60
@@ -248,13 +267,20 @@ service cloud.firestore {
           'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'uid', 'monthKey', 'logoDataUrl', 'logoCaption', 'unitName', 'formLabel', 'formTitle',
+          'uid', 'monthKey', 'logoDataUrl', 'logoWidthPx', 'logoRightDataUrl', 'logoRightWidthPx',
+          'followGlobalLeftLogo', 'followGlobalRightLogo',
+          'logoCaption', 'unitName', 'formLabel', 'formTitle',
           'docNumber', 'revision', 'effectiveDate', 'periodeLabel', 'colLabels',
           'createdAt', 'updatedAt'
         ])
         && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
         && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
         && (!('logoDataUrl' in data) || (data.logoDataUrl is string && data.logoDataUrl.size() <= 200000))
+        && (!('logoWidthPx' in data) || isValidLogoWidth(data.logoWidthPx))
+        && (!('logoRightDataUrl' in data) || (data.logoRightDataUrl is string && data.logoRightDataUrl.size() <= 200000))
+        && (!('logoRightWidthPx' in data) || isValidLogoWidth(data.logoRightWidthPx))
+        && (!('followGlobalLeftLogo' in data) || data.followGlobalLeftLogo is bool)
+        && (!('followGlobalRightLogo' in data) || data.followGlobalRightLogo is bool)
         && data.logoCaption is string && data.logoCaption.size() <= 80
         && data.unitName is string && data.unitName.size() <= 150
         && data.formLabel is string && data.formLabel.size() <= 60
@@ -338,7 +364,8 @@ service cloud.firestore {
           'signerName', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'uid', 'monthKey', 'logoLeftDataUrl', 'logoRightDataUrl',
+          'uid', 'monthKey', 'logoLeftDataUrl', 'logoLeftWidthPx', 'logoRightDataUrl', 'logoRightWidthPx',
+          'followGlobalLeftLogo', 'followGlobalRightLogo',
           'headerLine1', 'headerLine2', 'headerLine3', 'headerLine4',
           'titleMasak', 'titleOmpreng', 'bulanLabel', 'colLabels',
           'signerLine1', 'signerLine2', 'signerName', 'createdAt', 'updatedAt'
@@ -346,7 +373,11 @@ service cloud.firestore {
         && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
         && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
         && (!('logoLeftDataUrl' in data) || (data.logoLeftDataUrl is string && data.logoLeftDataUrl.size() <= 200000))
+        && (!('logoLeftWidthPx' in data) || isValidLogoWidth(data.logoLeftWidthPx))
         && (!('logoRightDataUrl' in data) || (data.logoRightDataUrl is string && data.logoRightDataUrl.size() <= 200000))
+        && (!('logoRightWidthPx' in data) || isValidLogoWidth(data.logoRightWidthPx))
+        && (!('followGlobalLeftLogo' in data) || data.followGlobalLeftLogo is bool)
+        && (!('followGlobalRightLogo' in data) || data.followGlobalRightLogo is bool)
         && data.headerLine1 is string && data.headerLine1.size() <= 120
         && data.headerLine2 is string && data.headerLine2.size() <= 150
         && data.headerLine3 is string && data.headerLine3.size() <= 150
@@ -405,7 +436,9 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'uid', 'monthKey', 'dateIso', 'hariKe', 'headerLine1', 'headerLine2',
-          'headerLine3', 'headerAlamat', 'titleSpecific', 'titleSummary', 'logoDataUrl',
+          'headerLine3', 'headerAlamat', 'titleSpecific', 'titleSummary',
+          'logoDataUrl', 'logoWidthPx', 'logoRightDataUrl', 'logoRightWidthPx',
+          'followGlobalLeftLogo', 'followGlobalRightLogo',
           'specificRows', 'summaryOverrides', 'createdAt', 'updatedAt'
         ])
         && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
@@ -419,6 +452,11 @@ service cloud.firestore {
         && data.titleSpecific is string && data.titleSpecific.size() <= 120
         && data.titleSummary is string && data.titleSummary.size() <= 120
         && (!('logoDataUrl' in data) || (data.logoDataUrl is string && data.logoDataUrl.size() <= 200000))
+        && (!('logoWidthPx' in data) || isValidLogoWidth(data.logoWidthPx))
+        && (!('logoRightDataUrl' in data) || (data.logoRightDataUrl is string && data.logoRightDataUrl.size() <= 200000))
+        && (!('logoRightWidthPx' in data) || isValidLogoWidth(data.logoRightWidthPx))
+        && (!('followGlobalLeftLogo' in data) || data.followGlobalLeftLogo is bool)
+        && (!('followGlobalRightLogo' in data) || data.followGlobalRightLogo is bool)
         && data.specificRows is list && data.specificRows.size() <= 200
         && data.summaryOverrides is map && data.summaryOverrides.size() <= 20
         && data.createdAt is timestamp
@@ -432,7 +470,10 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'uid', 'monthKey', 'dateIso', 'hariKe', 'headerLine1', 'headerLine2',
-          'headerLine3', 'headerAlamat', 'logoDataUrl', 'worksheets', 'createdAt', 'updatedAt'
+          'headerLine3', 'headerAlamat',
+          'logoDataUrl', 'logoWidthPx', 'logoRightDataUrl', 'logoRightWidthPx',
+          'followGlobalLeftLogo', 'followGlobalRightLogo',
+          'worksheets', 'createdAt', 'updatedAt'
         ])
         && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
         && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
@@ -443,6 +484,11 @@ service cloud.firestore {
         && data.headerLine3 is string && data.headerLine3.size() <= 150
         && data.headerAlamat is string && data.headerAlamat.size() <= 250
         && (!('logoDataUrl' in data) || (data.logoDataUrl is string && data.logoDataUrl.size() <= 200000))
+        && (!('logoWidthPx' in data) || isValidLogoWidth(data.logoWidthPx))
+        && (!('logoRightDataUrl' in data) || (data.logoRightDataUrl is string && data.logoRightDataUrl.size() <= 200000))
+        && (!('logoRightWidthPx' in data) || isValidLogoWidth(data.logoRightWidthPx))
+        && (!('followGlobalLeftLogo' in data) || data.followGlobalLeftLogo is bool)
+        && (!('followGlobalRightLogo' in data) || data.followGlobalRightLogo is bool)
         && data.worksheets is list && data.worksheets.size() <= 30
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -458,7 +504,10 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'uid', 'monthKey', 'dateIso', 'hariKe', 'headerLine1', 'headerLine2',
-          'headerLine3', 'headerAlamat', 'logoDataUrl', 'recapTitle', 'sideLabel',
+          'headerLine3', 'headerAlamat',
+          'logoDataUrl', 'logoWidthPx', 'logoRightDataUrl', 'logoRightWidthPx',
+          'followGlobalLeftLogo', 'followGlobalRightLogo',
+          'recapTitle', 'sideLabel',
           'bufferPercent', 'bumbuPercent', 'rabPorsiKecilRate', 'rabPorsiBesarRate',
           'poJudul', 'poDari', 'poKepada', 'poAlamat', 'poSignerLabel1', 'poSignerLabel2',
           'poSignerName', 'itemOverrides', 'createdAt', 'updatedAt'
@@ -472,6 +521,11 @@ service cloud.firestore {
         && data.headerLine3 is string && data.headerLine3.size() <= 150
         && data.headerAlamat is string && data.headerAlamat.size() <= 250
         && (!('logoDataUrl' in data) || (data.logoDataUrl is string && data.logoDataUrl.size() <= 200000))
+        && (!('logoWidthPx' in data) || isValidLogoWidth(data.logoWidthPx))
+        && (!('logoRightDataUrl' in data) || (data.logoRightDataUrl is string && data.logoRightDataUrl.size() <= 200000))
+        && (!('logoRightWidthPx' in data) || isValidLogoWidth(data.logoRightWidthPx))
+        && (!('followGlobalLeftLogo' in data) || data.followGlobalLeftLogo is bool)
+        && (!('followGlobalRightLogo' in data) || data.followGlobalRightLogo is bool)
         && data.recapTitle is string && data.recapTitle.size() <= 150
         && data.sideLabel is string && data.sideLabel.size() <= 60
         && data.bufferPercent is number && data.bufferPercent >= 0 && data.bufferPercent <= 500
@@ -486,6 +540,47 @@ service cloud.firestore {
         && data.poSignerLabel2 is string && data.poSignerLabel2.size() <= 150
         && data.poSignerName is string && data.poSignerName.size() <= 150
         && data.itemOverrides is map && data.itemOverrides.size() <= 500
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMasterMenuPlan(data) {
+      return data.keys().hasAll([
+          'uid', 'monthKey', 'title', 'categoryIds', 'cycleMode',
+          'headerLine1', 'headerLine2', 'headerLine3', 'headerAlamat',
+          'rowLabels', 'weeks', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'monthKey', 'title', 'categoryIds', 'cycleMode',
+          'headerLine1', 'headerLine2', 'headerLine3', 'headerAlamat',
+          'logoDataUrl', 'logoWidthPx', 'logoRightDataUrl', 'logoRightWidthPx',
+          'followGlobalLeftLogo', 'followGlobalRightLogo',
+          'rowLabels', 'weeks', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == request.auth.uid && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.monthKey is string && data.monthKey.size() == 7 && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 160
+        && data.categoryIds is list
+        && data.categoryIds.size() >= 1
+        && data.categoryIds.size() <= 20
+        && data.categoryIds.hasOnly([
+          'tk_paud_lb', 'sd_1_3', 'sd_4_6', 'smp_mts', 'sma_smk',
+          'pendidik', 'tendik', 'anak_balita', 'balita_13_59',
+          'balita_6_11', 'ibu_hamil', 'ibu_menyusui'
+        ])
+        && data.cycleMode in ['1_minggu', '2_minggu', '3_minggu', '4_minggu', 'bulanan']
+        && data.headerLine1 is string && data.headerLine1.size() <= 120
+        && data.headerLine2 is string && data.headerLine2.size() <= 150
+        && data.headerLine3 is string && data.headerLine3.size() <= 150
+        && data.headerAlamat is string && data.headerAlamat.size() <= 250
+        && (!('logoDataUrl' in data) || (data.logoDataUrl is string && data.logoDataUrl.size() <= 200000))
+        && (!('logoWidthPx' in data) || isValidLogoWidth(data.logoWidthPx))
+        && (!('logoRightDataUrl' in data) || (data.logoRightDataUrl is string && data.logoRightDataUrl.size() <= 200000))
+        && (!('logoRightWidthPx' in data) || isValidLogoWidth(data.logoRightWidthPx))
+        && (!('followGlobalLeftLogo' in data) || data.followGlobalLeftLogo is bool)
+        && (!('followGlobalRightLogo' in data) || data.followGlobalRightLogo is bool)
+        && data.rowLabels is map && data.rowLabels.size() <= 12
+        && data.weeks is list && data.weeks.size() >= 1 && data.weeks.size() <= 6 && data.weeks[0] is map
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -510,7 +605,8 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'email', 'reportTitle', 'namaSppg', 'idSppg',
-          'alamat', 'kabKota', 'provinsi', 'namaSppi', 'nomorHp', 'updatedAt'
+          'alamat', 'kabKota', 'provinsi', 'namaSppi', 'nomorHp',
+          'logoSettings', 'updatedAt'
         ]);
 
       allow delete: if isOwner(userId) && isValidId(userId);
@@ -640,7 +736,9 @@ service cloud.firestore {
             && incoming().createdAt == existing().createdAt
             && incoming().updatedAt == request.time
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'logoDataUrl', 'logoCaption', 'unitName', 'formLabel', 'formTitle',
+              'logoDataUrl', 'logoWidthPx', 'logoRightDataUrl', 'logoRightWidthPx',
+              'followGlobalLeftLogo', 'followGlobalRightLogo',
+              'logoCaption', 'unitName', 'formLabel', 'formTitle',
               'docNumber', 'revision', 'effectiveDate', 'bulanLabel', 'tahunLabel',
               'colLabels', 'verifierLine1', 'verifierLine2', 'verifierName', 'updatedAt'
             ])
@@ -714,7 +812,9 @@ service cloud.firestore {
             && incoming().createdAt == existing().createdAt
             && incoming().updatedAt == request.time
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'logoDataUrl', 'logoCaption', 'unitName', 'formLabel', 'formTitle',
+              'logoDataUrl', 'logoWidthPx', 'logoRightDataUrl', 'logoRightWidthPx',
+              'followGlobalLeftLogo', 'followGlobalRightLogo',
+              'logoCaption', 'unitName', 'formLabel', 'formTitle',
               'docNumber', 'revision', 'effectiveDate', 'periodeLabel', 'tableLabels',
               'sopTitle', 'sopSubtitle', 'updatedAt'
             ])
@@ -828,7 +928,9 @@ service cloud.firestore {
             && incoming().createdAt == existing().createdAt
             && incoming().updatedAt == request.time
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'logoDataUrl', 'logoCaption', 'unitName', 'formLabel', 'formTitle',
+              'logoDataUrl', 'logoWidthPx', 'logoRightDataUrl', 'logoRightWidthPx',
+              'followGlobalLeftLogo', 'followGlobalRightLogo',
+              'logoCaption', 'unitName', 'formLabel', 'formTitle',
               'docNumber', 'revision', 'effectiveDate', 'periodeLabel', 'colLabels',
               'updatedAt'
             ])
@@ -945,7 +1047,8 @@ service cloud.firestore {
             && incoming().createdAt == existing().createdAt
             && incoming().updatedAt == request.time
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'logoLeftDataUrl', 'logoRightDataUrl',
+              'logoLeftDataUrl', 'logoLeftWidthPx', 'logoRightDataUrl', 'logoRightWidthPx',
+              'followGlobalLeftLogo', 'followGlobalRightLogo',
               'headerLine1', 'headerLine2', 'headerLine3', 'headerLine4',
               'titleMasak', 'titleOmpreng', 'bulanLabel', 'colLabels',
               'signerLine1', 'signerLine2', 'signerName', 'updatedAt'
@@ -1022,8 +1125,10 @@ service cloud.firestore {
             && incoming().updatedAt == request.time
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'hariKe', 'headerLine1', 'headerLine2', 'headerLine3', 'headerAlamat',
-              'titleSpecific', 'titleSummary', 'logoDataUrl', 'specificRows',
-              'summaryOverrides', 'updatedAt'
+              'titleSpecific', 'titleSummary',
+              'logoDataUrl', 'logoWidthPx', 'logoRightDataUrl', 'logoRightWidthPx',
+              'followGlobalLeftLogo', 'followGlobalRightLogo',
+              'specificRows', 'summaryOverrides', 'updatedAt'
             ])
             && exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId));
 
@@ -1061,7 +1166,9 @@ service cloud.firestore {
             && incoming().updatedAt == request.time
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'hariKe', 'headerLine1', 'headerLine2', 'headerLine3', 'headerAlamat',
-              'logoDataUrl', 'worksheets', 'updatedAt'
+              'logoDataUrl', 'logoWidthPx', 'logoRightDataUrl', 'logoRightWidthPx',
+              'followGlobalLeftLogo', 'followGlobalRightLogo',
+              'worksheets', 'updatedAt'
             ])
             && exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId));
 
@@ -1099,7 +1206,9 @@ service cloud.firestore {
             && incoming().updatedAt == request.time
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'hariKe', 'headerLine1', 'headerLine2', 'headerLine3', 'headerAlamat',
-              'logoDataUrl', 'recapTitle', 'sideLabel', 'bufferPercent', 'bumbuPercent',
+              'logoDataUrl', 'logoWidthPx', 'logoRightDataUrl', 'logoRightWidthPx',
+              'followGlobalLeftLogo', 'followGlobalRightLogo',
+              'recapTitle', 'sideLabel', 'bufferPercent', 'bumbuPercent',
               'rabPorsiKecilRate', 'rabPorsiBesarRate', 'poJudul', 'poDari', 'poKepada',
               'poAlamat', 'poSignerLabel1', 'poSignerLabel2', 'poSignerName',
               'itemOverrides', 'updatedAt'
@@ -1107,6 +1216,45 @@ service cloud.firestore {
             && exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId));
 
           allow delete: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(dayId);
+        }
+
+        // Master Menu Plans Subcollection (1-4 Minggu / Bulanan)
+        match /masterMenus/{planId} {
+          allow get: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(planId);
+          allow list: if isOwner(userId) && resource.data.uid == request.auth.uid;
+
+          allow create: if isOwner(userId)
+            && isValidId(userId)
+            && isValidId(monthId)
+            && isValidId(planId)
+            && isValidMasterMenuPlan(incoming())
+            && incoming().monthKey == monthId
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time
+            && (
+              exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId))
+              || existsAfter(/databases/$(database)/documents/users/$(userId)/months/$(monthId))
+            );
+
+          allow update: if isOwner(userId)
+            && isValidId(userId)
+            && isValidId(monthId)
+            && isValidId(planId)
+            && isValidMasterMenuPlan(incoming())
+            && incoming().uid == existing().uid
+            && incoming().monthKey == existing().monthKey
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'title', 'categoryIds', 'cycleMode',
+              'headerLine1', 'headerLine2', 'headerLine3', 'headerAlamat',
+              'logoDataUrl', 'logoWidthPx', 'logoRightDataUrl', 'logoRightWidthPx',
+              'followGlobalLeftLogo', 'followGlobalRightLogo',
+              'rowLabels', 'weeks', 'updatedAt'
+            ])
+            && exists(/databases/$(database)/documents/users/$(userId)/months/$(monthId));
+
+          allow delete: if isOwner(userId) && isValidId(userId) && isValidId(monthId) && isValidId(planId);
         }
       }
     }
