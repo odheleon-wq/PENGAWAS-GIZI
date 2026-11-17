@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
+import {
+  getRedirectResult,
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+  type User,
+} from 'firebase/auth';
 import {
   Activity,
   Archive,
@@ -196,6 +203,7 @@ import { AdminPanelView } from './components/AdminPanelView';
 export default function App() {
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [authRedirectError, setAuthRedirectError] = useState<unknown>(null);
   const [accessRecord, setAccessRecord] = useState<UserAccessRecord | null>(null);
   const [accessLoading, setAccessLoading] = useState(true);
 
@@ -280,6 +288,16 @@ export default function App() {
   // 0. Firebase Authentication & Waiting-List Access Listener
   useEffect(() => {
     let unsubAccess: (() => void) | null = null;
+
+    void getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          setAuthRedirectError(null);
+        }
+      })
+      .catch((err) => {
+        setAuthRedirectError(err);
+      });
 
     const unsubAuth = onAuthStateChanged(auth, (user) => {
       if (unsubAccess) {
@@ -1406,7 +1424,20 @@ export default function App() {
   const photoReadyCount = entries.filter((e) => Boolean(e.photoDataUrl)).length;
 
   const handleLoginWithGoogle = async () => {
-    await signInWithPopup(auth, googleProvider);
+    setAuthRedirectError(null);
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err) {
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: unknown }).code || '')
+          : '';
+      if (code === 'auth/popup-blocked') {
+        await signInWithRedirect(auth, googleProvider);
+        return;
+      }
+      throw err;
+    }
   };
 
   const handleLogout = async () => {
@@ -1429,7 +1460,12 @@ export default function App() {
   }
 
   if (!authUser) {
-    return <LoginScreen onLoginWithGoogle={handleLoginWithGoogle} />;
+    return (
+      <LoginScreen
+        onLoginWithGoogle={handleLoginWithGoogle}
+        initialError={authRedirectError}
+      />
+    );
   }
 
   if (!isAdmin && effectiveAccessState !== 'approved') {

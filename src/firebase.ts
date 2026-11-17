@@ -1,11 +1,50 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import {
+  browserLocalPersistence,
+  getAuth,
+  GoogleAuthProvider,
+  setPersistence,
+} from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
+import defaultFirebaseConfig from '../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+function pickEnvValue(envValue: string | undefined, fallback: string): string {
+  const trimmed = typeof envValue === 'string' ? envValue.trim() : '';
+  return trimmed ? trimmed : fallback;
+}
+
+export const activeFirebaseConfig = {
+  ...defaultFirebaseConfig,
+  projectId: pickEnvValue(import.meta.env.VITE_FIREBASE_PROJECT_ID, defaultFirebaseConfig.projectId),
+  appId: pickEnvValue(import.meta.env.VITE_FIREBASE_APP_ID, defaultFirebaseConfig.appId),
+  apiKey: pickEnvValue(import.meta.env.VITE_FIREBASE_API_KEY, defaultFirebaseConfig.apiKey),
+  authDomain: pickEnvValue(
+    import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+    defaultFirebaseConfig.authDomain
+  ),
+  firestoreDatabaseId: pickEnvValue(
+    import.meta.env.VITE_FIREBASE_DATABASE_ID,
+    defaultFirebaseConfig.firestoreDatabaseId
+  ),
+  storageBucket: pickEnvValue(
+    import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+    defaultFirebaseConfig.storageBucket
+  ),
+  messagingSenderId: pickEnvValue(
+    import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    defaultFirebaseConfig.messagingSenderId
+  ),
+  oAuthClientId: pickEnvValue(
+    import.meta.env.VITE_FIREBASE_OAUTH_CLIENT_ID,
+    defaultFirebaseConfig.oAuthClientId
+  ),
+};
+
+const app = initializeApp(activeFirebaseConfig);
+export const db = getFirestore(app, activeFirebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
+
+void setPersistence(auth, browserLocalPersistence).catch(() => undefined);
 
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({

@@ -11,11 +11,13 @@ import {
   FileSpreadsheet,
   Lock,
   LogIn,
+  RefreshCw,
 } from 'lucide-react';
-import firebaseConfig from '../../firebase-applet-config.json';
+import { activeFirebaseConfig as firebaseConfig } from '../firebase';
 
 interface LoginScreenProps {
   onLoginWithGoogle: () => Promise<void>;
+  initialError?: unknown;
 }
 
 interface AuthErrorGuide {
@@ -38,13 +40,14 @@ function resolveAuthErrorGuide(err: unknown): AuthErrorGuide {
     return {
       code: 'auth/unauthorized-domain',
       title: 'Domain Belum Diizinkan di Firebase',
-      summary: `Domain "${currentHost || 'saat ini'}" belum terdaftar pada daftar Authorized domains di Firebase Authentication.`,
+      summary: `Domain "${currentHost || 'saat ini'}" ditolak oleh server Firebase Authentication karena belum terdaftar pada Authorized domains project "${firebaseConfig.projectId}".`,
       showDomainTools: true,
       steps: [
-        `Buka Firebase Console pada project "${firebaseConfig.projectId}" menggunakan akun Google pemilik project.`,
+        `Buka Firebase Console pada project "${firebaseConfig.projectId}" menggunakan akun Google pemilik project (pastikan profil Chrome yang aktif adalah akun pemilik project).`,
         'Masuk ke menu Authentication → Settings → Authorized domains.',
-        `Klik "Add domain", ketik "${currentHost || 'pengawasgizi.vercel.app'}" tanpa https://, lalu klik Add.`,
-        'Muat ulang halaman ini (Refresh), lalu klik tombol masuk kembali.',
+        `Klik "Add domain", ketik "${currentHost || 'pengawasgizi.vercel.app'}" tanpa https://, lalu klik Add (tambahkan juga domain pratinjau jika diperlukan).`,
+        'Alternatif jika memakai project Firebase sendiri di Vercel: isi variabel VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID, VITE_FIREBASE_APP_ID, dan VITE_FIREBASE_DATABASE_ID di Vercel lalu Redeploy.',
+        'Setelah domain ditambahkan, klik "Muat Ulang Halaman" di bawah lalu masuk kembali.',
       ],
     };
   }
@@ -130,11 +133,16 @@ function resolveAuthErrorGuide(err: unknown): AuthErrorGuide {
   };
 }
 
-export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginWithGoogle }) => {
+export const LoginScreen: React.FC<LoginScreenProps> = ({
+  onLoginWithGoogle,
+  initialError,
+}) => {
   const [loading, setLoading] = useState(false);
   const [errorGuide, setErrorGuide] = useState<AuthErrorGuide | null>(null);
   const [showHelpPanel, setShowHelpPanel] = useState(false);
   const [copiedHost, setCopiedHost] = useState(false);
+
+  const displayedGuide = errorGuide ?? (initialError ? resolveAuthErrorGuide(initialError) : null);
 
   const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
   const firebaseAuthSettingsUrl = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/settings`;
@@ -230,7 +238,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginWithGoogle }) =
                 </div>
               </div>
 
-              {errorGuide && (
+              {displayedGuide && (
                 <div
                   role="alert"
                   className="mb-5 rounded-lg border border-red-200 bg-red-50/90 p-4 text-xs text-red-900 space-y-3"
@@ -238,21 +246,21 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginWithGoogle }) =
                   <div className="flex items-start gap-2.5">
                     <AlertTriangle className="mt-0.5 h-4 w-4 text-red-600 shrink-0" />
                     <div className="space-y-1 min-w-0">
-                      <div className="font-semibold text-red-900">{errorGuide.title}</div>
-                      <p className="leading-relaxed text-red-800">{errorGuide.summary}</p>
+                      <div className="font-semibold text-red-900">{displayedGuide.title}</div>
+                      <p className="leading-relaxed text-red-800">{displayedGuide.summary}</p>
                     </div>
                   </div>
 
                   <div className="border-t border-red-200/80 pt-2.5 space-y-1.5">
                     <div className="font-semibold text-red-900">Langkah Mengatasi:</div>
                     <ol className="list-decimal pl-4 space-y-1 text-red-800 leading-relaxed">
-                      {errorGuide.steps.map((step, index) => (
+                      {displayedGuide.steps.map((step, index) => (
                         <li key={index}>{step}</li>
                       ))}
                     </ol>
                   </div>
 
-                  {errorGuide.showDomainTools && currentHost && (
+                  {displayedGuide.showDomainTools && currentHost && (
                     <div className="border-t border-red-200/80 pt-2.5 flex flex-wrap items-center gap-2">
                       <button
                         type="button"
@@ -280,6 +288,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginWithGoogle }) =
                         Buka Firebase Console
                         <ExternalLink className="h-3 w-3" />
                       </a>
+                      <button
+                        type="button"
+                        onClick={() => window.location.reload()}
+                        className="inline-flex items-center gap-1 rounded-md border border-red-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-red-800 hover:bg-red-100/60 transition-colors"
+                      >
+                        <RefreshCw className="h-3 w-3" />
+                        Muat Ulang Halaman
+                      </button>
                     </div>
                   )}
                 </div>
