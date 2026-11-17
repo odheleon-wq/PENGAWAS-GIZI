@@ -143,6 +143,96 @@ async function startServer() {
     }
   });
 
+  app.post('/api/fetch-tkpi-csv', async (req, res) => {
+    try {
+      const { url } = req.body as { url?: string };
+      if (!url || typeof url !== 'string') {
+        return res.status(400).json({ error: 'Link spreadsheet TKPI 2020 tidak ditemukan.' });
+      }
+
+      const trimmed = url.trim();
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(trimmed);
+      } catch {
+        return res.status(400).json({ error: 'Format URL spreadsheet tidak valid.' });
+      }
+
+      if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
+        return res.status(400).json({ error: 'URL harus menggunakan protokol http atau https.' });
+      }
+
+      const host = parsedUrl.hostname.toLowerCase();
+      if (
+        host === 'localhost' ||
+        host === '127.0.0.1' ||
+        host === '0.0.0.0' ||
+        host.startsWith('10.') ||
+        host.startsWith('192.168.') ||
+        host.startsWith('169.254.')
+      ) {
+        return res.status(400).json({ error: 'Host tidak diizinkan.' });
+      }
+
+      // Normalize Google Sheets URLs into direct CSV export links
+      let targetUrl = trimmed;
+      const gsheetMatch = trimmed.match(
+        /https?:\/\/docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/
+      );
+      if (gsheetMatch) {
+        const sheetId = gsheetMatch[1];
+        const gidMatch = trimmed.match(/[?&#]gid=(\d+)/);
+        const gid = gidMatch ? gidMatch[1] : '0';
+        if (!trimmed.includes('format=csv') && !trimmed.includes('output=csv') && !trimmed.includes('tqx=out:csv')) {
+          targetUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
+        }
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      try {
+        const response = await fetch(targetUrl, {
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; SPPG-Portal/1.0)',
+            Accept: 'text/csv,text/plain,*/*',
+          },
+        });
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+          return res.status(422).json({
+            error: `Gagal mengambil spreadsheet (HTTP ${response.status}). Pastikan akses Google Sheets diset "Siapa saja yang memiliki link dapat melihat" atau Publikasikan ke Web (CSV).`,
+          });
+        }
+
+        const csvText = await response.text();
+        if (csvText.trim().startsWith('<!DOCTYPE') || csvText.trim().startsWith('<html')) {
+          return res.status(422).json({
+            error:
+              'Link mengembalikan halaman HTML login/izin Google Sheets, bukan file CSV. Pastikan sharing diset "Anyone with the link can view" atau gunakan File → Bagikan → Publikasikan ke web (format CSV).',
+          });
+        }
+
+        return res.json({
+          csvText,
+          resolvedUrl: targetUrl,
+        });
+      } catch (err) {
+        clearTimeout(timeout);
+        throw err;
+      }
+    } catch (error) {
+      console.error('Fetch TKPI CSV error:', error);
+      return res.status(500).json({
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Gagal menyinkronkan link spreadsheet TKPI 2020.',
+      });
+    }
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({

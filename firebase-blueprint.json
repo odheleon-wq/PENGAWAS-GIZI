@@ -899,6 +899,259 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "FoodTempFormConfig": {
+      "title": "FoodTempFormConfig",
+      "description": "Konfigurasi kop surat, dua logo, judul form makanan masak & masuk ompreng, label kolom, dan tanda tangan pengawas gizi.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "monthKey": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}$",
+          "minLength": 7,
+          "maxLength": 7
+        },
+        "logoLeftDataUrl": {
+          "type": "string",
+          "maxLength": 200000
+        },
+        "logoRightDataUrl": {
+          "type": "string",
+          "maxLength": 200000
+        },
+        "headerLine1": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "headerLine2": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "headerLine3": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "headerLine4": {
+          "type": "string",
+          "maxLength": 250
+        },
+        "titleMasak": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "titleOmpreng": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "bulanLabel": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "colLabels": {
+          "type": "object",
+          "description": "Label kustom header kolom tabel suhu makanan."
+        },
+        "signerLine1": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "signerLine2": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "signerName": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "monthKey",
+        "headerLine1",
+        "headerLine2",
+        "headerLine3",
+        "headerLine4",
+        "titleMasak",
+        "titleOmpreng",
+        "bulanLabel",
+        "signerLine1",
+        "signerLine2",
+        "signerName",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "FoodTempDayBlock": {
+      "title": "FoodTempDayBlock",
+      "description": "Blok catatan tanggal untuk Laporan Suhu Makanan Masak atau Masuk Ompreng berisi daftar makanan dan suhunya.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "monthKey": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}$",
+          "minLength": 7,
+          "maxLength": 7
+        },
+        "sheetType": {
+          "type": "string",
+          "enum": ["masak", "ompreng"]
+        },
+        "blockOrder": {
+          "type": "integer"
+        },
+        "tanggal": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "paraf": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "items": {
+          "type": "array",
+          "description": "Daftar pasangan nama makanan dan suhu (°C) untuk tanggal tersebut."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "monthKey",
+        "sheetType",
+        "blockOrder",
+        "tanggal",
+        "paraf",
+        "items",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TkpiSyncConfig": {
+      "title": "TkpiSyncConfig",
+      "description": "Konfigurasi link spreadsheet TKPI 2020 dan daftar bahan pangan hasil sinkronisasi atau tambahan manual.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "spreadsheetUrl": { "type": "string", "maxLength": 500 },
+        "lastSyncedAt": { "type": "string", "maxLength": 60 },
+        "syncedItems": { "type": "array", "description": "Daftar bahan makanan dari spreadsheet." },
+        "customItems": { "type": "array", "description": "Daftar bahan makanan tambahan manual." },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "spreadsheetUrl", "lastSyncedAt", "syncedItems", "customItems", "updatedAt"]
+    },
+    "DailyPmRecord": {
+      "title": "DailyPmRecord",
+      "description": "Data spesifik sekolah/lembaga dan rekap penerima manfaat harian (13 kelompok sasaran + sampel).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "monthKey": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}$", "minLength": 7, "maxLength": 7 },
+        "dateIso": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "minLength": 10, "maxLength": 10 },
+        "hariKe": { "type": "integer" },
+        "headerLine1": { "type": "string", "maxLength": 120 },
+        "headerLine2": { "type": "string", "maxLength": 150 },
+        "headerLine3": { "type": "string", "maxLength": 150 },
+        "headerAlamat": { "type": "string", "maxLength": 250 },
+        "titleSpecific": { "type": "string", "maxLength": 120 },
+        "titleSummary": { "type": "string", "maxLength": 120 },
+        "logoDataUrl": { "type": "string", "maxLength": 200000 },
+        "specificRows": { "type": "array", "description": "Daftar penerima manfaat per sekolah atau lembaga." },
+        "summaryOverrides": { "type": "object", "description": "Penyesuaian manual per kelompok sasaran." },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid", "monthKey", "dateIso", "hariKe", "headerLine1", "headerLine2",
+        "headerLine3", "headerAlamat", "titleSpecific", "titleSummary",
+        "specificRows", "summaryOverrides", "createdAt", "updatedAt"
+      ]
+    },
+    "FoodCostDayPlan": {
+      "title": "FoodCostDayPlan",
+      "description": "Lembar kerja Nilai Gizi & Food Cost harian per kategori kelompok sasaran dan lembar kerja alergi/diet.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "monthKey": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}$", "minLength": 7, "maxLength": 7 },
+        "dateIso": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "minLength": 10, "maxLength": 10 },
+        "hariKe": { "type": "integer" },
+        "headerLine1": { "type": "string", "maxLength": 120 },
+        "headerLine2": { "type": "string", "maxLength": 150 },
+        "headerLine3": { "type": "string", "maxLength": 150 },
+        "headerAlamat": { "type": "string", "maxLength": 250 },
+        "logoDataUrl": { "type": "string", "maxLength": 200000 },
+        "worksheets": { "type": "array", "description": "Daftar lembar kerja kategori/gabungan/alergi." },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid", "monthKey", "dateIso", "hariKe", "headerLine1", "headerLine2",
+        "headerLine3", "headerAlamat", "worksheets", "createdAt", "updatedAt"
+      ]
+    },
+    "RawMaterialRecapDayConfig": {
+      "title": "RawMaterialRecapDayConfig",
+      "description": "Konfigurasi rekap kebutuhan bahan baku keseluruhan, buffer persentase bebas, RAB vs belanja, dan Nota Pesanan (PO) harian.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "monthKey": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}$", "minLength": 7, "maxLength": 7 },
+        "dateIso": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "minLength": 10, "maxLength": 10 },
+        "hariKe": { "type": "integer" },
+        "headerLine1": { "type": "string", "maxLength": 120 },
+        "headerLine2": { "type": "string", "maxLength": 150 },
+        "headerLine3": { "type": "string", "maxLength": 150 },
+        "headerAlamat": { "type": "string", "maxLength": 250 },
+        "logoDataUrl": { "type": "string", "maxLength": 200000 },
+        "recapTitle": { "type": "string", "maxLength": 150 },
+        "sideLabel": { "type": "string", "maxLength": 60 },
+        "bufferPercent": { "type": "number" },
+        "bumbuPercent": { "type": "number" },
+        "rabPorsiKecilRate": { "type": "number" },
+        "rabPorsiBesarRate": { "type": "number" },
+        "poJudul": { "type": "string", "maxLength": 120 },
+        "poDari": { "type": "string", "maxLength": 150 },
+        "poKepada": { "type": "string", "maxLength": 150 },
+        "poAlamat": { "type": "string", "maxLength": 250 },
+        "poSignerLabel1": { "type": "string", "maxLength": 100 },
+        "poSignerLabel2": { "type": "string", "maxLength": 150 },
+        "poSignerName": { "type": "string", "maxLength": 150 },
+        "itemOverrides": { "type": "object", "description": "Penyesuaian buffer/satuan/harga per bahan." },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid", "monthKey", "dateIso", "hariKe", "headerLine1", "headerLine2",
+        "headerLine3", "headerAlamat", "recapTitle", "sideLabel", "bufferPercent",
+        "bumbuPercent", "rabPorsiKecilRate", "rabPorsiBesarRate", "poJudul",
+        "poDari", "poKepada", "poAlamat", "poSignerLabel1", "poSignerLabel2",
+        "poSignerName", "itemOverrides", "createdAt", "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -967,6 +1220,42 @@
         "$ref": "#/entities/FreezerLogRow"
       },
       "description": "Baris catatan pengecekan suhu harian (Cek I, II, III) pada lembar kerja Freezer atau Chiller."
+    },
+    "/users/{userId}/months/{monthId}/foodTempForms/{formId}": {
+      "schema": {
+        "$ref": "#/entities/FoodTempFormConfig"
+      },
+      "description": "Konfigurasi kop surat dan label Form Laporan Suhu Makanan Masak & Masuk Ompreng."
+    },
+    "/users/{userId}/months/{monthId}/foodTempBlocks/{blockId}": {
+      "schema": {
+        "$ref": "#/entities/FoodTempDayBlock"
+      },
+      "description": "Blok catatan tanggal berisi nama makanan, suhu makanan (°C), dan paraf pada form Suhu Makanan Masak atau Masuk Ompreng."
+    },
+    "/users/{userId}/settings/{settingId}": {
+      "schema": {
+        "$ref": "#/entities/TkpiSyncConfig"
+      },
+      "description": "Konfigurasi sinkronisasi spreadsheet TKPI 2020 dan bahan tambahan pengguna."
+    },
+    "/users/{userId}/months/{monthId}/pmDays/{dayId}": {
+      "schema": {
+        "$ref": "#/entities/DailyPmRecord"
+      },
+      "description": "Catatan Update Data Spesifik & Update Data Penerima Manfaat harian."
+    },
+    "/users/{userId}/months/{monthId}/foodCostDays/{dayId}": {
+      "schema": {
+        "$ref": "#/entities/FoodCostDayPlan"
+      },
+      "description": "Lembar kerja Nilai Gizi & Food Cost harian per kategori dan alergi."
+    },
+    "/users/{userId}/months/{monthId}/poDays/{dayId}": {
+      "schema": {
+        "$ref": "#/entities/RawMaterialRecapDayConfig"
+      },
+      "description": "Rekapan total kebutuhan bahan baku dengan buffer fleksibel serta Nota Pesanan (PO)."
     }
   }
 }

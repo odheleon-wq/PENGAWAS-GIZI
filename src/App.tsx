@@ -3,6 +3,7 @@ import {
   Activity,
   Archive,
   Building2,
+  Calculator,
   Calendar,
   CalendarPlus,
   ChevronLeft,
@@ -10,49 +11,71 @@ import {
   ClipboardCheck,
   Download,
   FileSpreadsheet,
+  LayoutDashboard,
   ListOrdered,
   Menu,
+  ShoppingCart,
   Snowflake,
   Thermometer,
+  Users,
+  Utensils,
   X,
 } from 'lucide-react';
 import {
   createFreezerMachine,
   createTempRoom,
   deleteDailyMenuEntry,
+  deleteFoodTempDayBlock,
   deleteFreezerLogRow,
   deleteFreezerMachine,
   deleteSampleRow,
   deleteTempRoom,
   fetchFreezerLogRowsOnce,
   fetchRoomDayReadingsOnce,
+  getDefaultDailyPmRecord,
+  getDefaultFoodCostDayPlan,
+  getDefaultFoodTempFormConfig,
   getDefaultFreezerFormConfig,
+  getDefaultRawMaterialRecapDayConfig,
   getDefaultSampleFormConfig,
   getDefaultTempFormConfig,
   LOCAL_WORKSPACE_UID,
   renumberMonthEntriesChronologically,
+  saveFoodTempFormConfig,
   saveFreezerFormConfig,
   saveMonthNutritionConfig,
   saveSampleFormConfig,
   saveTempFormConfig,
+  saveTkpiSyncConfig,
   saveUserProfile,
   seedAllPresetTempRooms,
+  seedDefaultFoodTempBlocks,
+  subscribeFoodTempDayBlocks,
+  subscribeFoodTempFormConfig,
   subscribeFreezerFormConfig,
   subscribeFreezerLogRows,
   subscribeFreezerMachines,
   subscribeMonthEntries,
+  subscribeMonthFoodCostPlans,
   subscribeMonthlyArchives,
+  subscribeMonthPmRecords,
+  subscribeMonthPoRecaps,
   subscribeRoomDayReadings,
   subscribeSampleFormConfig,
   subscribeSampleRows,
   subscribeTempFormConfig,
   subscribeTempRooms,
+  subscribeTkpiSyncConfig,
   subscribeUserProfile,
   updateEntryNutritionMap,
   updateFreezerMachine,
   updateTempRoom,
   upsertDailyMenuEntry,
+  upsertDailyPmRecord,
+  upsertFoodCostDayPlan,
+  upsertFoodTempDayBlock,
   upsertFreezerLogRow,
+  upsertRawMaterialRecapDayConfig,
   upsertSampleRow,
   upsertTempDayReading,
 } from './services/sppgService';
@@ -60,6 +83,11 @@ import { getInitialDirectProfile } from './services/localSppgStore';
 import type {
   AkgTargetsConfig,
   DailyMenuEntry,
+  DailyPmRecord,
+  FoodCostDayPlan,
+  FoodTempDayBlock,
+  FoodTempFormConfig,
+  FoodTempSheetType,
   FreezerFormConfig,
   FreezerLogRow,
   FreezerMachine,
@@ -67,6 +95,7 @@ import type {
   MonthlyArchive,
   NutritionValues,
   PdfOrientation,
+  RawMaterialRecapDayConfig,
   SampleFormConfig,
   SamplePertinggalRow,
   SppgUserProfile,
@@ -74,6 +103,7 @@ import type {
   TempDayReading,
   TempFormConfig,
   TempMonitoringRoom,
+  TkpiSyncConfig,
   WorkspaceTab,
 } from './types';
 import {
@@ -88,13 +118,18 @@ import {
   shiftMonthKey,
 } from './utils/dateUtils';
 import {
+  exportFoodCostNutritionToF4Pdf,
+  exportFoodTemperatureToF4Pdf,
   exportFreezerChillerToF4Pdf,
   exportNutritionToF4Pdf,
+  exportRawMaterialAndPoToF4Pdf,
   exportRekapanToF4Pdf,
   exportSamplePertinggalToF4Pdf,
   exportTemperatureMonitoringToF4Pdf,
+  exportUpdatePmToF4Pdf,
 } from './utils/pdfExporter';
 import { SppgProfileForm } from './components/SppgProfileForm';
+import { DashboardCompletionPanel } from './components/DashboardCompletionPanel';
 import { RekapanTablePreview } from './components/RekapanTablePreview';
 import { EntryEditorModal } from './components/EntryEditorModal';
 import { MonthCalendarView } from './components/MonthCalendarView';
@@ -104,6 +139,11 @@ import { NutritionEntryModal } from './components/NutritionEntryModal';
 import { SamplePertinggalView } from './components/SamplePertinggalView';
 import { TemperatureMonitoringView } from './components/TemperatureMonitoringView';
 import { FreezerChillerView } from './components/FreezerChillerView';
+import { LaporanSuhuMakananView } from './components/LaporanSuhuMakananView';
+import { UpdatePmView } from './components/UpdatePmView';
+import { FoodCostNutritionView } from './components/FoodCostNutritionView';
+import { RekapBahanBakuPoView } from './components/RekapBahanBakuPoView';
+import { TkpiSyncModal } from './components/TkpiSyncModal';
 
 export default function App() {
   const workspaceUid = LOCAL_WORKSPACE_UID;
@@ -118,7 +158,7 @@ export default function App() {
   const [entries, setEntries] = useState<DailyMenuEntry[]>([]);
   const [entriesLoading, setEntriesLoading] = useState(true);
 
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>('rekapan');
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('dashboard');
   const [pdfOrientation, setPdfOrientation] = useState<PdfOrientation>('landscape');
   const [includeYearInPeriod, setIncludeYearInPeriod] = useState<boolean>(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -150,9 +190,33 @@ export default function App() {
   const [activeFreezerMachineId, setActiveFreezerMachineId] = useState<string | null>(null);
   const [freezerLogRows, setFreezerLogRows] = useState<FreezerLogRow[]>([]);
 
+  const [foodTempConfig, setFoodTempConfig] = useState<FoodTempFormConfig | null>(null);
+  const [foodTempBlocks, setFoodTempBlocks] = useState<FoodTempDayBlock[]>([]);
+  const [foodTempBlocksLoaded, setFoodTempBlocksLoaded] = useState(false);
+
+  const [tkpiSyncConfig, setTkpiSyncConfig] = useState<TkpiSyncConfig | null>(null);
+  const [tkpiModalOpen, setTkpiModalOpen] = useState(false);
+
+  const [pmRecords, setPmRecords] = useState<DailyPmRecord[]>([]);
+  const [foodCostPlans, setFoodCostPlans] = useState<FoodCostDayPlan[]>([]);
+  const [poRecaps, setPoRecaps] = useState<RawMaterialRecapDayConfig[]>([]);
+  const [activeWorkDateIso, setActiveWorkDateIso] = useState<string>(() => getTodayIso());
+
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
-  // 1. Profile & Monthly Archive List Subscriptions (direct without login gate)
+  // Keep shared daily work date inside activeMonthKey when month changes
+  useEffect(() => {
+    if (!activeWorkDateIso.startsWith(activeMonthKey)) {
+      const today = getTodayIso();
+      if (today.startsWith(activeMonthKey)) {
+        setActiveWorkDateIso(today);
+      } else {
+        setActiveWorkDateIso(`${activeMonthKey}-01`);
+      }
+    }
+  }, [activeMonthKey, activeWorkDateIso]);
+
+  // 1. Profile, Monthly Archive & TKPI Config Subscriptions (direct without login gate)
   useEffect(() => {
     setErrorBanner(null);
 
@@ -174,9 +238,16 @@ export default function App() {
       (err) => setErrorBanner(err.message)
     );
 
+    const unsubTkpi = subscribeTkpiSyncConfig(
+      workspaceUid,
+      (cfg) => setTkpiSyncConfig(cfg),
+      (err) => setErrorBanner(err.message)
+    );
+
     return () => {
       unsubProfile();
       unsubArchives();
+      unsubTkpi();
     };
   }, [workspaceUid]);
 
@@ -187,6 +258,7 @@ export default function App() {
     setActiveTempRoomId(null);
     setFreezerMachinesLoaded(false);
     setActiveFreezerMachineId(null);
+    setFoodTempBlocksLoaded(false);
 
     const unsubEntries = subscribeMonthEntries(
       workspaceUid,
@@ -255,6 +327,47 @@ export default function App() {
       }
     );
 
+    const unsubFoodTempConfig = subscribeFoodTempFormConfig(
+      workspaceUid,
+      activeMonthKey,
+      (cfg) => setFoodTempConfig(cfg),
+      (err) => setErrorBanner(err.message)
+    );
+
+    const unsubFoodTempBlocks = subscribeFoodTempDayBlocks(
+      workspaceUid,
+      activeMonthKey,
+      (list) => {
+        setFoodTempBlocks(list);
+        setFoodTempBlocksLoaded(true);
+      },
+      (err) => {
+        setErrorBanner(err.message);
+        setFoodTempBlocksLoaded(true);
+      }
+    );
+
+    const unsubPmRecords = subscribeMonthPmRecords(
+      workspaceUid,
+      activeMonthKey,
+      (list) => setPmRecords(list),
+      (err) => setErrorBanner(err.message)
+    );
+
+    const unsubFoodCostPlans = subscribeMonthFoodCostPlans(
+      workspaceUid,
+      activeMonthKey,
+      (list) => setFoodCostPlans(list),
+      (err) => setErrorBanner(err.message)
+    );
+
+    const unsubPoRecaps = subscribeMonthPoRecaps(
+      workspaceUid,
+      activeMonthKey,
+      (list) => setPoRecaps(list),
+      (err) => setErrorBanner(err.message)
+    );
+
     return () => {
       unsubEntries();
       unsubSampleConfig();
@@ -263,6 +376,11 @@ export default function App() {
       unsubTempRooms();
       unsubFreezerConfig();
       unsubFreezerMachines();
+      unsubFoodTempConfig();
+      unsubFoodTempBlocks();
+      unsubPmRecords();
+      unsubFoodCostPlans();
+      unsubPoRecaps();
     };
   }, [workspaceUid, activeMonthKey]);
 
@@ -563,7 +681,135 @@ export default function App() {
     });
   };
 
+  const effectiveFoodTempConfig = useMemo(() => {
+    return foodTempConfig || getDefaultFoodTempFormConfig(workspaceUid, activeMonthKey, profile);
+  }, [workspaceUid, profile, foodTempConfig, activeMonthKey]);
+
+  const handleSaveFoodTempConfig = async (
+    next: Omit<FoodTempFormConfig, 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
+  ) => {
+    await saveFoodTempFormConfig(workspaceUid, activeMonthKey, next);
+  };
+
+  const handleSaveFoodTempBlock = async (
+    block: Omit<FoodTempDayBlock, 'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'> & {
+      id?: string;
+    }
+  ) => {
+    return upsertFoodTempDayBlock(workspaceUid, activeMonthKey, block);
+  };
+
+  const handleDeleteFoodTempBlock = async (blockId: string) => {
+    await deleteFoodTempDayBlock(workspaceUid, activeMonthKey, blockId);
+  };
+
+  const handleSeedDefaultFoodTempBlocks = async (
+    sheetType: FoodTempSheetType,
+    count = 5
+  ) => {
+    await seedDefaultFoodTempBlocks(workspaceUid, activeMonthKey, sheetType, count);
+  };
+
+  const handleSaveTkpiConfig = async (
+    next: Omit<TkpiSyncConfig, 'uid' | 'updatedAt'>
+  ) => {
+    await saveTkpiSyncConfig(workspaceUid, next);
+  };
+
+  const handleSavePmRecord = async (
+    record: Omit<DailyPmRecord, 'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
+  ) => {
+    await upsertDailyPmRecord(workspaceUid, activeMonthKey, record);
+  };
+
+  const handleSaveFoodCostPlan = async (
+    plan: Omit<FoodCostDayPlan, 'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
+  ) => {
+    await upsertFoodCostDayPlan(workspaceUid, activeMonthKey, plan);
+  };
+
+  const handleSyncWorksheetNutritionToEntry = async (
+    entryId: string,
+    nutritionByCategory: Partial<Record<TargetCategoryId, NutritionValues>>
+  ) => {
+    await updateEntryNutritionMap(workspaceUid, activeMonthKey, entryId, nutritionByCategory);
+  };
+
+  const handleSavePoRecapConfig = async (
+    cfg: Omit<RawMaterialRecapDayConfig, 'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
+  ) => {
+    await upsertRawMaterialRecapDayConfig(workspaceUid, activeMonthKey, cfg);
+  };
+
   const handleDownloadPdf = () => {
+    if (activeTab === 'foodcost') {
+      const matchedEntry = entries.find((e) => e.dateIso === activeWorkDateIso);
+      const plan =
+        foodCostPlans.find((p) => p.dateIso === activeWorkDateIso) ||
+        getDefaultFoodCostDayPlan(
+          workspaceUid,
+          activeMonthKey,
+          activeWorkDateIso,
+          matchedEntry?.hariKe || 1,
+          profile
+        );
+      const pmRecord = pmRecords.find((r) => r.dateIso === activeWorkDateIso) || null;
+      exportFoodCostNutritionToF4Pdf({
+        plan,
+        pmRecord,
+        orientation: pdfOrientation,
+      });
+      return;
+    }
+    if (activeTab === 'update_pm') {
+      const matchedEntry = entries.find((e) => e.dateIso === activeWorkDateIso);
+      const record =
+        pmRecords.find((r) => r.dateIso === activeWorkDateIso) ||
+        getDefaultDailyPmRecord(
+          workspaceUid,
+          activeMonthKey,
+          activeWorkDateIso,
+          matchedEntry?.hariKe || 1,
+          profile
+        );
+      exportUpdatePmToF4Pdf({
+        record,
+        viewMode: 'both',
+        orientation: pdfOrientation,
+      });
+      return;
+    }
+    if (activeTab === 'po_bahan') {
+      const matchedEntry = entries.find((e) => e.dateIso === activeWorkDateIso);
+      const recapConfig =
+        poRecaps.find((c) => c.dateIso === activeWorkDateIso) ||
+        getDefaultRawMaterialRecapDayConfig(
+          workspaceUid,
+          activeMonthKey,
+          activeWorkDateIso,
+          matchedEntry?.hariKe || 1,
+          profile
+        );
+      const foodCostPlan = foodCostPlans.find((p) => p.dateIso === activeWorkDateIso) || null;
+      const pmRecord = pmRecords.find((r) => r.dateIso === activeWorkDateIso) || null;
+      exportRawMaterialAndPoToF4Pdf({
+        recapConfig,
+        foodCostPlan,
+        pmRecord,
+        mode: 'both',
+        orientation: pdfOrientation,
+      });
+      return;
+    }
+    if (activeTab === 'makanan' && effectiveFoodTempConfig) {
+      exportFoodTemperatureToF4Pdf({
+        config: effectiveFoodTempConfig,
+        blocks: foodTempBlocks,
+        sheetsToExport: ['masak', 'ompreng'],
+        orientation: pdfOrientation,
+      });
+      return;
+    }
     if (activeTab === 'freezer' && effectiveFreezerConfig && effectiveFreezerMachineId) {
       const activeMachine = freezerMachines.find((m) => m.id === effectiveFreezerMachineId);
       if (activeMachine) {
@@ -626,11 +872,16 @@ export default function App() {
   };
 
   const navItems: Array<{ id: WorkspaceTab; label: string; icon: React.ReactNode }> = [
+    { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="h-4 w-4" /> },
     { id: 'rekapan', label: 'Tabel Rekapan & PDF', icon: <FileSpreadsheet className="h-4 w-4" /> },
     { id: 'gizi', label: 'Rekapan Nilai Gizi', icon: <Activity className="h-4 w-4" /> },
+    { id: 'foodcost', label: 'Nilai Gizi & Food Cost', icon: <Calculator className="h-4 w-4" /> },
+    { id: 'update_pm', label: 'Update PM', icon: <Users className="h-4 w-4" /> },
+    { id: 'po_bahan', label: 'Rekap Bahan Baku & PO', icon: <ShoppingCart className="h-4 w-4" /> },
     { id: 'sampel', label: 'Form Sampel Pertinggal', icon: <ClipboardCheck className="h-4 w-4" /> },
     { id: 'suhu', label: 'Monitoring Suhu Ruangan', icon: <Thermometer className="h-4 w-4" /> },
     { id: 'freezer', label: 'Suhu Freezer & Chiller', icon: <Snowflake className="h-4 w-4" /> },
+    { id: 'makanan', label: 'Suhu Makanan & Ompreng', icon: <Utensils className="h-4 w-4" /> },
     { id: 'kalender', label: 'Kalender & Hari Terlewat', icon: <Calendar className="h-4 w-4" /> },
     { id: 'arsip', label: 'Arsip Bulanan', icon: <Archive className="h-4 w-4" /> },
     { id: 'identitas', label: 'Identitas SPPG', icon: <Building2 className="h-4 w-4" /> },
@@ -745,9 +996,13 @@ export default function App() {
             <button
               type="button"
               disabled={
+                activeTab !== 'foodcost' &&
+                activeTab !== 'update_pm' &&
+                activeTab !== 'po_bahan' &&
                 activeTab !== 'sampel' &&
                 activeTab !== 'suhu' &&
                 activeTab !== 'freezer' &&
+                activeTab !== 'makanan' &&
                 entries.length === 0
               }
               onClick={handleDownloadPdf}
@@ -806,12 +1061,17 @@ export default function App() {
             </div>
           )}
 
-          {/* Month & F4 Settings Strip (visible on rekapan, gizi, sampel, suhu, freezer & kalender) */}
-          {(activeTab === 'rekapan' ||
+          {/* Month & F4 Settings Strip */}
+          {(activeTab === 'dashboard' ||
+            activeTab === 'rekapan' ||
             activeTab === 'gizi' ||
+            activeTab === 'foodcost' ||
+            activeTab === 'update_pm' ||
+            activeTab === 'po_bahan' ||
             activeTab === 'sampel' ||
             activeTab === 'suhu' ||
             activeTab === 'freezer' ||
+            activeTab === 'makanan' ||
             activeTab === 'kalender') && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
               {/* Month Picker */}
@@ -841,59 +1101,103 @@ export default function App() {
                 </button>
               </div>
 
-              {/* PDF & Table Controls */}
-              <div className="flex flex-wrap items-center gap-3">
-                {activeTab === 'rekapan' && entries.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={handleAutoRenumber}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                    title="Urutkan nomor Hari Ke 1, 2, 3 sesuai tanggal"
-                  >
-                    <ListOrdered className="h-3.5 w-3.5 text-slate-500" />
-                    Urutkan Hari Ke
-                  </button>
-                )}
+              {/* PDF & Table Controls (hidden on clean dashboard view) */}
+              {activeTab !== 'dashboard' && (
+                <div className="flex flex-wrap items-center gap-3">
+                  {activeTab === 'rekapan' && entries.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={handleAutoRenumber}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      title="Urutkan nomor Hari Ke 1, 2, 3 sesuai tanggal"
+                    >
+                      <ListOrdered className="h-3.5 w-3.5 text-slate-500" />
+                      Urutkan Hari Ke
+                    </button>
+                  )}
 
-                <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={includeYearInPeriod}
-                    onChange={(e) => setIncludeYearInPeriod(e.target.checked)}
-                    className="rounded border-slate-300 accent-emerald-600"
-                  />
-                  Sertakan Tahun di Periode
-                </label>
+                  <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={includeYearInPeriod}
+                      onChange={(e) => setIncludeYearInPeriod(e.target.checked)}
+                      className="rounded border-slate-300 accent-emerald-600"
+                    />
+                    Sertakan Tahun di Periode
+                  </label>
 
-                <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1">
-                  <button
-                    type="button"
-                    onClick={() => setPdfOrientation('landscape')}
-                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap ${
-                      pdfOrientation === 'landscape'
-                        ? 'bg-white text-slate-900 shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    F4 Landscape
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPdfOrientation('portrait')}
-                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap ${
-                      pdfOrientation === 'portrait'
-                        ? 'bg-white text-slate-900 shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    F4 Portrait
-                  </button>
+                  <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setPdfOrientation('landscape')}
+                      className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap ${
+                        pdfOrientation === 'landscape'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      F4 Landscape
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPdfOrientation('portrait')}
+                      className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap ${
+                        pdfOrientation === 'portrait'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      F4 Portrait
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
 
           {/* Tab Views */}
+          {activeTab === 'dashboard' && (
+            <div className="space-y-5">
+              {/* Welcome & Short Educational Motivation Banner */}
+              <section
+                aria-label="Ucapan selamat datang pengawas gizi"
+                className="rounded-xl border border-slate-200 bg-white px-5 py-4 sm:px-6 sm:py-5"
+              >
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500">
+                  <span className="font-medium text-emerald-700">Portal Pengawas Gizi</span>
+                  <span aria-hidden="true">·</span>
+                  <span>{profile.namaSppg || 'SPPG'}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>{getPeriodeDisplayName(activeMonthKey)}</span>
+                </div>
+                <h1 className="font-display mt-1 text-lg sm:text-xl font-bold tracking-tight text-slate-900 text-balance">
+                  Selamat Datang di Portal Pengawas Gizi
+                </h1>
+                <p className="mt-1.5 max-w-3xl text-xs sm:text-sm leading-relaxed text-slate-600">
+                  Setiap porsi seimbang, suhu pangan yang terjaga aman, serta catatan harian yang tertib adalah langkah nyata menjaga kualitas gizi generasi bangsa. Tetap teliti, konsisten, dan semangat mengawal mutu layanan hari ini!
+                </p>
+              </section>
+
+              <DashboardCompletionPanel
+                profile={profile}
+                monthKey={activeMonthKey}
+                entries={entries}
+                sampleRows={sampleRows}
+                tempRooms={tempRooms}
+                freezerMachines={freezerMachines}
+                foodTempBlocks={foodTempBlocks}
+                onNavigateTab={setActiveTab}
+                onAddNewMenu={() =>
+                  setEditorModal({
+                    open: true,
+                    dateIso: nextDateForActiveMonth,
+                    entry: null,
+                  })
+                }
+              />
+            </div>
+          )}
+
           {activeTab === 'rekapan' && (
             entriesLoading ? (
               <div className="rounded-xl border border-slate-200 bg-white p-12 text-center text-xs text-slate-500">
@@ -953,6 +1257,75 @@ export default function App() {
             )
           )}
 
+          {activeTab === 'foodcost' && (
+            <FoodCostNutritionView
+              uid={workspaceUid}
+              profile={profile}
+              monthKey={activeMonthKey}
+              entries={entries}
+              pmRecords={pmRecords}
+              foodCostPlans={foodCostPlans}
+              tkpiSyncConfig={tkpiSyncConfig}
+              activeDateIso={activeWorkDateIso}
+              onChangeDateIso={setActiveWorkDateIso}
+              onSaveDayPlan={handleSaveFoodCostPlan}
+              onSyncNutritionToEntry={handleSyncWorksheetNutritionToEntry}
+              onOpenTkpiModal={() => setTkpiModalOpen(true)}
+              onExportPdf={(plan, pmRecord, activeWorksheetId) => {
+                exportFoodCostNutritionToF4Pdf({
+                  plan,
+                  pmRecord,
+                  worksheetIds: activeWorksheetId ? [activeWorksheetId] : undefined,
+                  orientation: pdfOrientation,
+                });
+              }}
+            />
+          )}
+
+          {activeTab === 'update_pm' && (
+            <UpdatePmView
+              uid={workspaceUid}
+              profile={profile}
+              monthKey={activeMonthKey}
+              entries={entries}
+              pmRecords={pmRecords}
+              activeDateIso={activeWorkDateIso}
+              onChangeDateIso={setActiveWorkDateIso}
+              onSaveRecord={handleSavePmRecord}
+              onExportPdf={(record, viewMode) => {
+                exportUpdatePmToF4Pdf({
+                  record,
+                  viewMode,
+                  orientation: pdfOrientation,
+                });
+              }}
+            />
+          )}
+
+          {activeTab === 'po_bahan' && (
+            <RekapBahanBakuPoView
+              uid={workspaceUid}
+              profile={profile}
+              monthKey={activeMonthKey}
+              entries={entries}
+              pmRecords={pmRecords}
+              foodCostPlans={foodCostPlans}
+              poRecaps={poRecaps}
+              activeDateIso={activeWorkDateIso}
+              onChangeDateIso={setActiveWorkDateIso}
+              onSaveRecapConfig={handleSavePoRecapConfig}
+              onExportPdf={(recapConfig, foodCostPlan, pmRecord, mode) => {
+                exportRawMaterialAndPoToF4Pdf({
+                  recapConfig,
+                  foodCostPlan,
+                  pmRecord,
+                  mode,
+                  orientation: pdfOrientation,
+                });
+              }}
+            />
+          )}
+
           {activeTab === 'sampel' && effectiveSampleConfig && (
             <SamplePertinggalView
               profile={profile}
@@ -1005,6 +1378,22 @@ export default function App() {
               onSaveRow={handleSaveFreezerRow}
               onDeleteRow={handleDeleteFreezerRow}
               onExportAllMachinesPdf={handleExportAllFreezerMachinesPdf}
+            />
+          )}
+
+          {activeTab === 'makanan' && effectiveFoodTempConfig && (
+            <LaporanSuhuMakananView
+              profile={profile}
+              monthKey={activeMonthKey}
+              config={effectiveFoodTempConfig}
+              blocks={foodTempBlocks}
+              blocksLoaded={foodTempBlocksLoaded}
+              menuEntries={entries}
+              pdfOrientation={pdfOrientation}
+              onSaveConfig={handleSaveFoodTempConfig}
+              onSaveBlock={handleSaveFoodTempBlock}
+              onDeleteBlock={handleDeleteFoodTempBlock}
+              onSeedDefaultBlocks={handleSeedDefaultFoodTempBlocks}
             />
           )}
 
@@ -1072,6 +1461,14 @@ export default function App() {
           onSave={handleSaveEntryNutrition}
         />
       )}
+
+      {/* TKPI 2020 & Spreadsheet Sync Modal */}
+      <TkpiSyncModal
+        open={tkpiModalOpen}
+        config={tkpiSyncConfig}
+        onClose={() => setTkpiModalOpen(false)}
+        onSaveConfig={handleSaveTkpiConfig}
+      />
     </div>
   );
 }

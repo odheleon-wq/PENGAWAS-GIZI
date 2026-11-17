@@ -33,6 +33,15 @@ import type {
   FreezerLogRow,
   FreezerMachine,
   FreezerMachineType,
+  FoodTempColumnLabels,
+  FoodTempDayBlock,
+  FoodTempFormConfig,
+  FoodTempItemRow,
+  FoodTempSheetType,
+  TkpiSyncConfig,
+  DailyPmRecord,
+  FoodCostDayPlan,
+  RawMaterialRecapDayConfig,
 } from '../types';
 import {
   BGN_FREEZER_CHILLER_DEFAULTS,
@@ -44,21 +53,27 @@ import {
   createLocalFreezerMachine,
   createLocalTempRoom,
   deleteLocalDailyMenuEntry,
+  deleteLocalFoodTempDayBlock,
   deleteLocalFreezerLogRow,
   deleteLocalFreezerMachine,
   deleteLocalSampleRow,
   deleteLocalTempRoom,
+  fetchLocalFoodTempDayBlocksOnce,
   fetchLocalFreezerLogRowsOnce,
   fetchLocalMonthEntriesOnce,
   fetchLocalRoomDayReadingsOnce,
   LOCAL_WORKSPACE_UID,
   renumberLocalMonthEntriesChronologically,
+  saveLocalFoodTempFormConfig,
   saveLocalFreezerFormConfig,
   saveLocalMonthNutritionConfig,
   saveLocalSampleFormConfig,
   saveLocalTempFormConfig,
   saveLocalUserProfile,
   seedAllLocalPresetTempRooms,
+  seedDefaultLocalFoodTempBlocks,
+  subscribeLocalFoodTempDayBlocks,
+  subscribeLocalFoodTempFormConfig,
   subscribeLocalFreezerFormConfig,
   subscribeLocalFreezerLogRows,
   subscribeLocalFreezerMachines,
@@ -74,9 +89,20 @@ import {
   updateLocalFreezerMachine,
   updateLocalTempRoom,
   upsertLocalDailyMenuEntry,
+  upsertLocalFoodTempDayBlock,
   upsertLocalFreezerLogRow,
   upsertLocalSampleRow,
   upsertLocalTempDayReading,
+  subscribeLocalTkpiSyncConfig,
+  saveLocalTkpiSyncConfig,
+  subscribeLocalMonthPmRecords,
+  upsertLocalDailyPmRecord,
+  deleteLocalDailyPmRecord,
+  subscribeLocalMonthFoodCostPlans,
+  upsertLocalFoodCostDayPlan,
+  deleteLocalFoodCostDayPlan,
+  subscribeLocalMonthPoRecaps,
+  upsertLocalRawMaterialRecapDayConfig,
 } from './localSppgStore';
 
 export { LOCAL_WORKSPACE_UID };
@@ -1830,3 +1856,863 @@ export async function deleteFreezerLogRow(
     handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
+
+// --- Laporan Suhu Makanan Masak & Masuk Ompreng ---
+
+export const DEFAULT_FOOD_TEMP_COL_LABELS: FoodTempColumnLabels = {
+  tanggal: 'Tanggal',
+  namaMakanan: 'Nama Makanan',
+  suhuMakanan: 'Suhu Makanan (°C)',
+  paraf: 'Paraf',
+};
+
+function sanitizeFoodItemsForService(items: FoodTempItemRow[]): FoodTempItemRow[] {
+  const normalized = (items || []).slice(0, 20).map((item) => ({
+    namaMakanan: clampString(item.namaMakanan || '', 150),
+    suhu: clampString(item.suhu || '', 30),
+  }));
+  while (normalized.length === 0) {
+    normalized.push({ namaMakanan: '', suhu: '' });
+  }
+  return normalized;
+}
+
+export function getDefaultFoodTempFormConfig(
+  uid: string,
+  monthKey: string,
+  profile: SppgUserProfile
+): FoodTempFormConfig {
+  const { year, month } = parseMonthKey(monthKey);
+  const monthName = INDONESIAN_MONTHS[month - 1] || 'November';
+  const defaultKabLine = profile.kabKota
+    ? `KECAMATAN SAWERIGADI KAB. ${profile.kabKota.toUpperCase()}`
+    : 'KECAMATAN SAWERIGADI KAB. MUNA BARAT';
+
+  return {
+    uid,
+    monthKey,
+    logoLeftDataUrl: '',
+    logoRightDataUrl: '',
+    headerLine1: 'BADAN GIZI NASIONAL',
+    headerLine2: 'SATUAN PELAYANAN PEMENUHAN GIZI',
+    headerLine3: defaultKabLine,
+    headerLine4: profile.alamat
+      ? `Alamat: ${profile.alamat}`
+      : 'Alamat: Jln. Poros Lagadi-Todasi, Desa Ondoke, Kecamatan Sawerigadi, Kab. Muna Barat',
+    titleMasak: 'LAPORAN SUHU MAKANAN MASAK',
+    titleOmpreng: 'LAPORAN SUHU MAKANAN MASUK OMPRENG',
+    bulanLabel: `${monthName} ${year}`,
+    colLabels: { ...DEFAULT_FOOD_TEMP_COL_LABELS },
+    signerLine1: 'Pengawas Gizi',
+    signerLine2: profile.namaSppg
+      ? profile.namaSppg
+          .toLowerCase()
+          .replace(/\b\w/g, (c) => c.toUpperCase())
+          .replace(/^Sppg\b/i, 'SPPG')
+      : 'SPPG Muna Barat Sawerigadi Ondoke',
+    signerName: profile.namaSppi || '',
+  };
+}
+
+export function subscribeFoodTempFormConfig(
+  uid: string,
+  monthKey: string,
+  onData: (config: FoodTempFormConfig | null) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalFoodTempFormConfig(monthKey, onData);
+  }
+  const path = `users/${uid}/months/${monthKey}/foodTempForms/suhu_makanan`;
+  return onSnapshot(
+    doc(db, 'users', uid, 'months', monthKey, 'foodTempForms', 'suhu_makanan'),
+    (snap) => {
+      if (!snap.exists()) {
+        onData(null);
+        return;
+      }
+      onData(snap.data() as FoodTempFormConfig);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.GET, path);
+      } catch (wrapped) {
+        onError?.(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+export async function saveFoodTempFormConfig(
+  uid: string,
+  monthKey: string,
+  input: Omit<FoodTempFormConfig, 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
+): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return saveLocalFoodTempFormConfig(monthKey, input, DEFAULT_FOOD_TEMP_COL_LABELS);
+  }
+  const path = `users/${uid}/months/${monthKey}/foodTempForms/suhu_makanan`;
+  const monthRef = doc(db, 'users', uid, 'months', monthKey);
+  const formRef = doc(db, 'users', uid, 'months', monthKey, 'foodTempForms', 'suhu_makanan');
+  const { year, month } = parseMonthKey(monthKey);
+  const monthPeriodeLabel = getPeriodeLabel(year, month, true);
+
+  const l = input.colLabels || DEFAULT_FOOD_TEMP_COL_LABELS;
+  const sanitizedColLabels: FoodTempColumnLabels = {
+    tanggal: clampString(l.tanggal || 'Tanggal', 40),
+    namaMakanan: clampString(l.namaMakanan || 'Nama Makanan', 60),
+    suhuMakanan: clampString(l.suhuMakanan || 'Suhu Makanan (°C)', 60),
+    paraf: clampString(l.paraf || 'Paraf', 40),
+  };
+
+  const payloadData = {
+    uid,
+    monthKey,
+    logoLeftDataUrl: (input.logoLeftDataUrl || '').slice(0, 200000),
+    logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    headerLine1: clampString(input.headerLine1, 120),
+    headerLine2: clampString(input.headerLine2, 150),
+    headerLine3: clampString(input.headerLine3, 150),
+    headerLine4: clampString(input.headerLine4, 250),
+    titleMasak: clampString(input.titleMasak, 120),
+    titleOmpreng: clampString(input.titleOmpreng, 120),
+    bulanLabel: clampString(input.bulanLabel, 60),
+    colLabels: sanitizedColLabels,
+    signerLine1: clampString(input.signerLine1, 100),
+    signerLine2: clampString(input.signerLine2, 150),
+    signerName: clampString(input.signerName, 150),
+  };
+
+  try {
+    const [monthSnap, formSnap] = await Promise.all([getDoc(monthRef), getDoc(formRef)]);
+    if (!formSnap.exists()) {
+      const batch = writeBatch(db);
+      if (!monthSnap.exists()) {
+        batch.set(monthRef, {
+          uid,
+          monthKey,
+          year,
+          month,
+          periodeLabel: monthPeriodeLabel,
+          entryCount: 0,
+          photoCount: 0,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      batch.set(formRef, {
+        ...payloadData,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+    } else {
+      await updateDoc(formRef, {
+        ...payloadData,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export function subscribeFoodTempDayBlocks(
+  uid: string,
+  monthKey: string,
+  onData: (blocks: FoodTempDayBlock[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalFoodTempDayBlocks(monthKey, onData);
+  }
+  const path = `users/${uid}/months/${monthKey}/foodTempBlocks`;
+  const q = query(
+    collection(db, 'users', uid, 'months', monthKey, 'foodTempBlocks'),
+    where('uid', '==', uid)
+  );
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list: FoodTempDayBlock[] = snapshot.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<FoodTempDayBlock, 'id'>),
+      }));
+      list.sort(
+        (a, b) => a.sheetType.localeCompare(b.sheetType) || a.blockOrder - b.blockOrder
+      );
+      onData(list);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch (wrapped) {
+        onError?.(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+export async function fetchFoodTempDayBlocksOnce(
+  uid: string,
+  monthKey: string
+): Promise<FoodTempDayBlock[]> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return fetchLocalFoodTempDayBlocksOnce(monthKey);
+  }
+  const path = `users/${uid}/months/${monthKey}/foodTempBlocks`;
+  try {
+    const q = query(
+      collection(db, 'users', uid, 'months', monthKey, 'foodTempBlocks'),
+      where('uid', '==', uid)
+    );
+    const snap = await getDocs(q);
+    const list: FoodTempDayBlock[] = snap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<FoodTempDayBlock, 'id'>),
+    }));
+    list.sort(
+      (a, b) => a.sheetType.localeCompare(b.sheetType) || a.blockOrder - b.blockOrder
+    );
+    return list;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+  }
+}
+
+export async function upsertFoodTempDayBlock(
+  uid: string,
+  monthKey: string,
+  input: Omit<FoodTempDayBlock, 'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'> & {
+    id?: string;
+  }
+): Promise<string> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return upsertLocalFoodTempDayBlock(monthKey, input);
+  }
+  const blockId =
+    input.id ||
+    `ftb_${input.sheetType}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const path = `users/${uid}/months/${monthKey}/foodTempBlocks/${blockId}`;
+  const monthRef = doc(db, 'users', uid, 'months', monthKey);
+  const blockRef = doc(db, 'users', uid, 'months', monthKey, 'foodTempBlocks', blockId);
+  const { year, month } = parseMonthKey(monthKey);
+  const monthPeriodeLabel = getPeriodeLabel(year, month, true);
+
+  const clean = {
+    uid,
+    monthKey,
+    sheetType: input.sheetType,
+    blockOrder: Math.max(1, Math.min(200, Math.round(input.blockOrder))),
+    tanggal: clampString(input.tanggal, 60),
+    paraf: clampString(input.paraf, 60),
+    items: sanitizeFoodItemsForService(input.items),
+  };
+
+  try {
+    const [monthSnap, blockSnap] = await Promise.all([getDoc(monthRef), getDoc(blockRef)]);
+    if (!blockSnap.exists()) {
+      const batch = writeBatch(db);
+      if (!monthSnap.exists()) {
+        batch.set(monthRef, {
+          uid,
+          monthKey,
+          year,
+          month,
+          periodeLabel: monthPeriodeLabel,
+          entryCount: 0,
+          photoCount: 0,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      batch.set(blockRef, {
+        ...clean,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+    } else {
+      await updateDoc(blockRef, {
+        blockOrder: clean.blockOrder,
+        tanggal: clean.tanggal,
+        paraf: clean.paraf,
+        items: clean.items,
+        updatedAt: serverTimestamp(),
+      });
+    }
+    return blockId;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteFoodTempDayBlock(
+  uid: string,
+  monthKey: string,
+  blockId: string
+): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return deleteLocalFoodTempDayBlock(monthKey, blockId);
+  }
+  const path = `users/${uid}/months/${monthKey}/foodTempBlocks/${blockId}`;
+  try {
+    await deleteDoc(doc(db, 'users', uid, 'months', monthKey, 'foodTempBlocks', blockId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export async function seedDefaultFoodTempBlocks(
+  uid: string,
+  monthKey: string,
+  sheetType: FoodTempSheetType,
+  count = 5
+): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return seedDefaultLocalFoodTempBlocks(monthKey, sheetType, count);
+  }
+  const path = `users/${uid}/months/${monthKey}/foodTempBlocks`;
+  const monthRef = doc(db, 'users', uid, 'months', monthKey);
+  const { year, month } = parseMonthKey(monthKey);
+  const monthPeriodeLabel = getPeriodeLabel(year, month, true);
+
+  try {
+    const [monthSnap, existingBlocks] = await Promise.all([
+      getDoc(monthRef),
+      fetchFoodTempDayBlocksOnce(uid, monthKey),
+    ]);
+    if (existingBlocks.some((b) => b.sheetType === sheetType)) return;
+
+    const batch = writeBatch(db);
+    if (!monthSnap.exists()) {
+      batch.set(monthRef, {
+        uid,
+        monthKey,
+        year,
+        month,
+        periodeLabel: monthPeriodeLabel,
+        entryCount: 0,
+        photoCount: 0,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    for (let i = 1; i <= count; i++) {
+      const blockId = `ftb_${sheetType}_init_${i}`;
+      const blockRef = doc(db, 'users', uid, 'months', monthKey, 'foodTempBlocks', blockId);
+      batch.set(blockRef, {
+        uid,
+        monthKey,
+        sheetType,
+        blockOrder: i,
+        tanggal: '',
+        paraf: '',
+        items: Array.from({ length: 5 }, () => ({ namaMakanan: '', suhu: '' })),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+// --- TKPI 2020 & Spreadsheet Sync ---
+
+export function subscribeTkpiSyncConfig(
+  uid: string,
+  onData: (config: TkpiSyncConfig | null) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalTkpiSyncConfig(onData);
+  }
+  const path = `users/${uid}/settings/tkpi`;
+  return onSnapshot(
+    doc(db, 'users', uid, 'settings', 'tkpi'),
+    (snap) => {
+      if (!snap.exists()) {
+        onData(null);
+        return;
+      }
+      onData(snap.data() as TkpiSyncConfig);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.GET, path);
+      } catch (wrapped) {
+        onError?.(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+export async function saveTkpiSyncConfig(
+  uid: string,
+  input: Omit<TkpiSyncConfig, 'uid' | 'updatedAt'>
+): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return saveLocalTkpiSyncConfig(input);
+  }
+  const path = `users/${uid}/settings/tkpi`;
+  const ref = doc(db, 'users', uid, 'settings', 'tkpi');
+  const payload = {
+    uid,
+    spreadsheetUrl: clampString(input.spreadsheetUrl || '', 500),
+    lastSyncedAt: clampString(input.lastSyncedAt || '', 60),
+    syncedItems: Array.isArray(input.syncedItems) ? input.syncedItems.slice(0, 1500) : [],
+    customItems: Array.isArray(input.customItems) ? input.customItems.slice(0, 500) : [],
+    updatedAt: serverTimestamp(),
+  };
+  try {
+    await setDoc(ref, payload, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+// --- Update PM (Data Spesifik & Data Penerima Manfaat) ---
+
+export function getDefaultDailyPmRecord(
+  uid: string,
+  monthKey: string,
+  dateIso: string,
+  hariKe: number,
+  profile: SppgUserProfile
+): DailyPmRecord {
+  return {
+    id: dateIso,
+    uid,
+    monthKey,
+    dateIso,
+    hariKe,
+    headerLine1: 'BADAN GIZI NASIONAL',
+    headerLine2: 'SATUAN PELAYANAN PEMENUHAN GIZI',
+    headerLine3: profile.namaSppg || 'SPPG',
+    headerAlamat: profile.alamat ? `Alamat : ${profile.alamat}` : 'Alamat : -',
+    titleSpecific: 'UPDATE DATA SPESIFIK',
+    titleSummary: 'UPDATE DATA PENERIMA MANFAAT',
+    logoDataUrl: '',
+    specificRows: [],
+    summaryOverrides: {},
+  };
+}
+
+export function subscribeMonthPmRecords(
+  uid: string,
+  monthKey: string,
+  onData: (records: DailyPmRecord[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalMonthPmRecords(monthKey, onData);
+  }
+  const path = `users/${uid}/months/${monthKey}/pmDays`;
+  const q = query(
+    collection(db, 'users', uid, 'months', monthKey, 'pmDays'),
+    where('uid', '==', uid)
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list: DailyPmRecord[] = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<DailyPmRecord, 'id'>),
+      }));
+      list.sort((a, b) => a.dateIso.localeCompare(b.dateIso));
+      onData(list);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch (wrapped) {
+        onError?.(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+export async function upsertDailyPmRecord(
+  uid: string,
+  monthKey: string,
+  input: Omit<DailyPmRecord, 'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
+): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return upsertLocalDailyPmRecord(monthKey, input);
+  }
+  const path = `users/${uid}/months/${monthKey}/pmDays/${input.dateIso}`;
+  const monthRef = doc(db, 'users', uid, 'months', monthKey);
+  const ref = doc(db, 'users', uid, 'months', monthKey, 'pmDays', input.dateIso);
+  const { year, month } = parseMonthKey(monthKey);
+  const monthPeriodeLabel = getPeriodeLabel(year, month, true);
+
+  const clean = {
+    uid,
+    monthKey,
+    dateIso: input.dateIso,
+    hariKe: Math.max(1, Math.min(366, Math.round(input.hariKe || 1))),
+    headerLine1: clampString(input.headerLine1 || 'BADAN GIZI NASIONAL', 120),
+    headerLine2: clampString(input.headerLine2 || 'SATUAN PELAYANAN PEMENUHAN GIZI', 150),
+    headerLine3: clampString(input.headerLine3 || '', 150),
+    headerAlamat: clampString(input.headerAlamat || '', 250),
+    titleSpecific: clampString(input.titleSpecific || 'UPDATE DATA SPESIFIK', 120),
+    titleSummary: clampString(input.titleSummary || 'UPDATE DATA PENERIMA MANFAAT', 120),
+    logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    specificRows: (input.specificRows || []).slice(0, 200),
+    summaryOverrides: input.summaryOverrides || {},
+  };
+
+  try {
+    const [monthSnap, docSnap] = await Promise.all([getDoc(monthRef), getDoc(ref)]);
+    if (!docSnap.exists()) {
+      const batch = writeBatch(db);
+      if (!monthSnap.exists()) {
+        batch.set(monthRef, {
+          uid,
+          monthKey,
+          year,
+          month,
+          periodeLabel: monthPeriodeLabel,
+          entryCount: 0,
+          photoCount: 0,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      batch.set(ref, {
+        ...clean,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+    } else {
+      await updateDoc(ref, {
+        ...clean,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteDailyPmRecord(
+  uid: string,
+  monthKey: string,
+  dateIso: string
+): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return deleteLocalDailyPmRecord(monthKey, dateIso);
+  }
+  const path = `users/${uid}/months/${monthKey}/pmDays/${dateIso}`;
+  try {
+    await deleteDoc(doc(db, 'users', uid, 'months', monthKey, 'pmDays', dateIso));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+// --- Nilai Gizi & Food Cost ---
+
+export function getDefaultFoodCostDayPlan(
+  uid: string,
+  monthKey: string,
+  dateIso: string,
+  hariKe: number,
+  profile: SppgUserProfile
+): FoodCostDayPlan {
+  return {
+    id: dateIso,
+    uid,
+    monthKey,
+    dateIso,
+    hariKe,
+    headerLine1: 'BADAN GIZI NASIONAL',
+    headerLine2: 'SATUAN PELAYANAN PEMENUHAN GIZI',
+    headerLine3: profile.namaSppg || 'SPPG',
+    headerAlamat: profile.alamat ? `Alamat : ${profile.alamat}` : 'Alamat : -',
+    logoDataUrl: '',
+    worksheets: [
+      {
+        id: `ws_${Date.now().toString(36)}_1`,
+        title: 'NILAI GIZI DAN FOOD COST PORSI KECIL TK/PAUD',
+        sideLabel: 'TK / PAUD',
+        categoryIds: ['tk_paud_lb'],
+        portionScope: 'kecil',
+        isAllergySheet: false,
+        bumbuPercent: 10,
+        rows: [],
+      },
+    ],
+  };
+}
+
+export function subscribeMonthFoodCostPlans(
+  uid: string,
+  monthKey: string,
+  onData: (plans: FoodCostDayPlan[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalMonthFoodCostPlans(monthKey, onData);
+  }
+  const path = `users/${uid}/months/${monthKey}/foodCostDays`;
+  const q = query(
+    collection(db, 'users', uid, 'months', monthKey, 'foodCostDays'),
+    where('uid', '==', uid)
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list: FoodCostDayPlan[] = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<FoodCostDayPlan, 'id'>),
+      }));
+      list.sort((a, b) => a.dateIso.localeCompare(b.dateIso));
+      onData(list);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch (wrapped) {
+        onError?.(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+export async function upsertFoodCostDayPlan(
+  uid: string,
+  monthKey: string,
+  input: Omit<FoodCostDayPlan, 'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
+): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return upsertLocalFoodCostDayPlan(monthKey, input);
+  }
+  const path = `users/${uid}/months/${monthKey}/foodCostDays/${input.dateIso}`;
+  const monthRef = doc(db, 'users', uid, 'months', monthKey);
+  const ref = doc(db, 'users', uid, 'months', monthKey, 'foodCostDays', input.dateIso);
+  const { year, month } = parseMonthKey(monthKey);
+  const monthPeriodeLabel = getPeriodeLabel(year, month, true);
+
+  const clean = {
+    uid,
+    monthKey,
+    dateIso: input.dateIso,
+    hariKe: Math.max(1, Math.min(366, Math.round(input.hariKe || 1))),
+    headerLine1: clampString(input.headerLine1 || 'BADAN GIZI NASIONAL', 120),
+    headerLine2: clampString(input.headerLine2 || 'SATUAN PELAYANAN PEMENUHAN GIZI', 150),
+    headerLine3: clampString(input.headerLine3 || '', 150),
+    headerAlamat: clampString(input.headerAlamat || '', 250),
+    logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    worksheets: (input.worksheets || []).slice(0, 30),
+  };
+
+  try {
+    const [monthSnap, docSnap] = await Promise.all([getDoc(monthRef), getDoc(ref)]);
+    if (!docSnap.exists()) {
+      const batch = writeBatch(db);
+      if (!monthSnap.exists()) {
+        batch.set(monthRef, {
+          uid,
+          monthKey,
+          year,
+          month,
+          periodeLabel: monthPeriodeLabel,
+          entryCount: 0,
+          photoCount: 0,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      batch.set(ref, {
+        ...clean,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+    } else {
+      await updateDoc(ref, {
+        ...clean,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteFoodCostDayPlan(
+  uid: string,
+  monthKey: string,
+  dateIso: string
+): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return deleteLocalFoodCostDayPlan(monthKey, dateIso);
+  }
+  const path = `users/${uid}/months/${monthKey}/foodCostDays/${dateIso}`;
+  try {
+    await deleteDoc(doc(db, 'users', uid, 'months', monthKey, 'foodCostDays', dateIso));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+// --- Rekap Bahan Baku & Nota Pesanan (PO) ---
+
+export function getDefaultRawMaterialRecapDayConfig(
+  uid: string,
+  monthKey: string,
+  dateIso: string,
+  hariKe: number,
+  profile: SppgUserProfile
+): RawMaterialRecapDayConfig {
+  return {
+    id: dateIso,
+    uid,
+    monthKey,
+    dateIso,
+    hariKe,
+    headerLine1: 'BADAN GIZI NASIONAL',
+    headerLine2: 'SATUAN PELAYANAN PEMENUHAN GIZI',
+    headerLine3: profile.namaSppg || 'SPPG',
+    headerAlamat: profile.alamat ? `Alamat : ${profile.alamat}` : 'Alamat : -',
+    logoDataUrl: '',
+    recapTitle: 'REKAPAN TOTAL KEBUTUHAN BAHAN BAKU KESELURUHAN',
+    sideLabel: 'REKAPAN / PO',
+    bufferPercent: 2.5,
+    bumbuPercent: 10,
+    rabPorsiKecilRate: 7000,
+    rabPorsiBesarRate: 10000,
+    poJudul: `NOTA PESANAN HARI ${hariKe}`,
+    poDari: profile.namaSppg || 'SPPG',
+    poKepada: '',
+    poAlamat: '',
+    poSignerLabel1: 'Mengetahui,',
+    poSignerLabel2: 'Kepala Satuan Pelayanan Pemenuhan Gizi',
+    poSignerName: '',
+    itemOverrides: {},
+  };
+}
+
+export function subscribeMonthPoRecaps(
+  uid: string,
+  monthKey: string,
+  onData: (recaps: RawMaterialRecapDayConfig[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return subscribeLocalMonthPoRecaps(monthKey, onData);
+  }
+  const path = `users/${uid}/months/${monthKey}/poDays`;
+  const q = query(
+    collection(db, 'users', uid, 'months', monthKey, 'poDays'),
+    where('uid', '==', uid)
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list: RawMaterialRecapDayConfig[] = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<RawMaterialRecapDayConfig, 'id'>),
+      }));
+      list.sort((a, b) => a.dateIso.localeCompare(b.dateIso));
+      onData(list);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch (wrapped) {
+        onError?.(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+export async function upsertRawMaterialRecapDayConfig(
+  uid: string,
+  monthKey: string,
+  input: Omit<
+    RawMaterialRecapDayConfig,
+    'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'
+  >
+): Promise<void> {
+  if (uid === LOCAL_WORKSPACE_UID) {
+    return upsertLocalRawMaterialRecapDayConfig(monthKey, input);
+  }
+  const path = `users/${uid}/months/${monthKey}/poDays/${input.dateIso}`;
+  const monthRef = doc(db, 'users', uid, 'months', monthKey);
+  const ref = doc(db, 'users', uid, 'months', monthKey, 'poDays', input.dateIso);
+  const { year, month } = parseMonthKey(monthKey);
+  const monthPeriodeLabel = getPeriodeLabel(year, month, true);
+
+  const clean = {
+    uid,
+    monthKey,
+    dateIso: input.dateIso,
+    hariKe: Math.max(1, Math.min(366, Math.round(input.hariKe || 1))),
+    headerLine1: clampString(input.headerLine1 || 'BADAN GIZI NASIONAL', 120),
+    headerLine2: clampString(input.headerLine2 || 'SATUAN PELAYANAN PEMENUHAN GIZI', 150),
+    headerLine3: clampString(input.headerLine3 || '', 150),
+    headerAlamat: clampString(input.headerAlamat || '', 250),
+    logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    recapTitle: clampString(
+      input.recapTitle || 'REKAPAN TOTAL KEBUTUHAN BAHAN BAKU KESELURUHAN',
+      150
+    ),
+    sideLabel: clampString(input.sideLabel || 'REKAPAN / PO', 60),
+    bufferPercent: Math.max(0, Number(input.bufferPercent) || 0),
+    bumbuPercent: Math.max(0, Number(input.bumbuPercent) || 0),
+    rabPorsiKecilRate: Math.max(0, Number(input.rabPorsiKecilRate) || 0),
+    rabPorsiBesarRate: Math.max(0, Number(input.rabPorsiBesarRate) || 0),
+    poJudul: clampString(input.poJudul || `NOTA PESANAN HARI ${input.hariKe || 1}`, 120),
+    poDari: clampString(input.poDari || '', 150),
+    poKepada: clampString(input.poKepada || '', 150),
+    poAlamat: clampString(input.poAlamat || '', 250),
+    poSignerLabel1: clampString(input.poSignerLabel1 || 'Mengetahui,', 100),
+    poSignerLabel2: clampString(
+      input.poSignerLabel2 || 'Kepala Satuan Pelayanan Pemenuhan Gizi',
+      150
+    ),
+    poSignerName: clampString(input.poSignerName || '', 150),
+    itemOverrides: input.itemOverrides || {},
+  };
+
+  try {
+    const [monthSnap, docSnap] = await Promise.all([getDoc(monthRef), getDoc(ref)]);
+    if (!docSnap.exists()) {
+      const batch = writeBatch(db);
+      if (!monthSnap.exists()) {
+        batch.set(monthRef, {
+          uid,
+          monthKey,
+          year,
+          month,
+          periodeLabel: monthPeriodeLabel,
+          entryCount: 0,
+          photoCount: 0,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      batch.set(ref, {
+        ...clean,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+    } else {
+      await updateDoc(ref, {
+        ...clean,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+

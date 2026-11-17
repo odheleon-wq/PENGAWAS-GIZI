@@ -12,17 +12,35 @@ import type {
   FreezerFormConfig,
   FreezerLogRow,
   FreezerMachine,
+  FoodTempDayBlock,
+  FoodTempFormConfig,
+  FoodTempSheetType,
+  DailyPmRecord,
+  FoodCostDayPlan,
+  RawMaterialRecapDayConfig,
 } from '../types';
 import {
   BGN_FREEZER_CHILLER_DEFAULTS,
   SOP_BGN_ROOM_PRESETS,
 } from '../constants/temperatureStandards';
 import {
+  DEFAULT_FOOD_TEMP_COL_LABELS,
   DEFAULT_FREEZER_COL_LABELS,
   DEFAULT_SAMPLE_COLUMN_LABELS,
   DEFAULT_TEMP_TABLE_LABELS,
 } from '../services/sppgService';
-import { formatIndonesianFullDate, getPeriodeLabel, parseMonthKey } from './dateUtils';
+import {
+  formatIndonesianFullDate,
+  getDaysInMonth,
+  getPeriodeLabel,
+  getTodayIso,
+  parseMonthKey,
+} from './dateUtils';
+import {
+  computeFoodCostWorksheet,
+  computePmSummary,
+  computeRawMaterialRecap,
+} from './foodCostCalculator';
 
 export function exportRekapanToF4Pdf(params: {
   profile: SppgUserProfile;
@@ -110,7 +128,97 @@ export function exportRekapanToF4Pdf(params: {
     doc.text(val, valueX, y, { maxWidth: contentWidth - (valueX - marginX) - 2 });
   });
 
-  cursorY += metaBoxHeight;
+  cursorY += metaBoxHeight + 3;
+
+  // 2B. Front-Page Executive Summary (Ringkasan Eksekutif Halaman Depan)
+  const totalMenus = sortedEntries.length;
+  const photoReadyCount = sortedEntries.filter(
+    (e) => Boolean(e.photoDataUrl && e.photoDataUrl.length > 0)
+  ).length;
+  const missingPhotoCount = Math.max(0, totalMenus - photoReadyCount);
+  const photoPct = totalMenus > 0 ? Math.round((photoReadyCount / totalMenus) * 100) : 0;
+  const daysInMonth = getDaysInMonth(year, month);
+  const calendarCoveragePct =
+    daysInMonth > 0 ? Math.min(100, Math.round((totalMenus / daysInMonth) * 100)) : 0;
+  const nutritionFilledCount = sortedEntries.filter(
+    (e) => e.nutritionByCategory && Object.keys(e.nutritionByCategory).length > 0
+  ).length;
+  const giziPct = totalMenus > 0 ? Math.round((nutritionFilledCount / totalMenus) * 100) : 0;
+
+  const execHeaderH = 5.4;
+  const execBodyH = 13.5;
+
+  // Executive header strip
+  doc.setFillColor(232, 245, 233);
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.28);
+  doc.rect(marginX, cursorY, contentWidth, execHeaderH, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.2);
+  doc.setTextColor(6, 78, 59);
+  doc.text('RINGKASAN EKSEKUTIF — DOKUMENTASI MENU HARIAN', marginX + 2.5, cursorY + 3.8);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.4);
+  doc.setTextColor(51, 65, 85);
+  doc.text(`Dicetak: ${formatIndonesianFullDate(getTodayIso())}`, pageWidth - marginX - 2.5, cursorY + 3.8, {
+    align: 'right',
+  });
+  cursorY += execHeaderH;
+
+  // 4-column executive summary KPI strip
+  const kpiColW = contentWidth / 4;
+  const execCards: Array<{ label: string; value: string; sub: string }> = [
+    {
+      label: 'TOTAL MENU TERCATAT',
+      value: `${totalMenus} Menu / Hari`,
+      sub: `${calendarCoveragePct}% dari ${daysInMonth} hari kalender`,
+    },
+    {
+      label: 'DOKUMENTASI FOTO (3:2)',
+      value: `${photoReadyCount} / ${totalMenus} (${photoPct}%)`,
+      sub:
+        totalMenus === 0
+          ? 'Belum ada entri menu'
+          : missingPhotoCount === 0
+          ? 'Seluruh hari sudah berfoto'
+          : `${missingPhotoCount} hari belum ada foto`,
+    },
+    {
+      label: 'KELENGKAPAN NILAI GIZI',
+      value: `${nutritionFilledCount} / ${totalMenus} (${giziPct}%)`,
+      sub: 'Menu terisi di rekap nilai gizi',
+    },
+    {
+      label: 'PERIODE LAPORAN',
+      value: periodeText,
+      sub: `${profile.idSppg || 'SPPG'} · F4 ${orientation === 'landscape' ? 'Landscape' : 'Portrait'}`,
+    },
+  ];
+
+  execCards.forEach((card, idx) => {
+    const cx = marginX + idx * kpiColW;
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.28);
+    doc.rect(cx, cursorY, kpiColW, execBodyH, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(orientation === 'landscape' ? 6.8 : 6.0);
+    doc.setTextColor(71, 85, 105);
+    doc.text(card.label, cx + 2.5, cursorY + 3.8, { maxWidth: kpiColW - 5 });
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(orientation === 'landscape' ? 10.2 : 8.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text(card.value, cx + 2.5, cursorY + 8.6, { maxWidth: kpiColW - 5 });
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(orientation === 'landscape' ? 6.8 : 5.8);
+    doc.setTextColor(71, 85, 105);
+    doc.text(card.sub, cx + 2.5, cursorY + 12.1, { maxWidth: kpiColW - 5 });
+  });
+
+  cursorY += execBodyH + 3.5;
 
   // 3. Column widths calibrated cleanly for F4 Landscape (310mm usable) or F4 Portrait (195mm usable)
   const colWidths =
@@ -1448,3 +1556,1315 @@ export function exportFreezerChillerToF4Pdf(params: {
   const safePeriode = (config.periodeLabel || 'BULAN').replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase();
   doc.save(`PENCATATAN_SUHU_FREEZER_CHILLER_${safeUnit}_${safePeriode}.pdf`);
 }
+
+export function exportFoodTemperatureToF4Pdf(params: {
+  config: FoodTempFormConfig;
+  blocks: FoodTempDayBlock[];
+  sheetsToExport: FoodTempSheetType[];
+  orientation?: PdfOrientation;
+}): void {
+  const { config, blocks, sheetsToExport, orientation = 'portrait' } = params;
+  if (sheetsToExport.length === 0) return;
+
+  const f4Format: [number, number] =
+    orientation === 'landscape' ? [330, 215] : [215, 330];
+
+  const doc = new jsPDF({
+    orientation,
+    unit: 'mm',
+    format: f4Format,
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const marginX = orientation === 'landscape' ? 16 : 14;
+  const contentWidth = pageWidth - marginX * 2;
+  const labels = {
+    ...DEFAULT_FOOD_TEMP_COL_LABELS,
+    ...(config.colLabels || {}),
+  };
+
+  sheetsToExport.forEach((sheetType, sheetIdx) => {
+    if (sheetIdx > 0) {
+      doc.addPage();
+    }
+
+    let cursorY = 12;
+
+    // 1. Official Dual-Logo Kop Surat matching image_019d0cdc.png
+    const logoSize = orientation === 'landscape' ? 18 : 16;
+    const leftLogoX = marginX + 2;
+    const rightLogoX = pageWidth - marginX - logoSize - 2;
+
+    // Left Logo (BGN Emblem)
+    if (config.logoLeftDataUrl) {
+      try {
+        doc.addImage(config.logoLeftDataUrl, leftLogoX, cursorY, logoSize, logoSize);
+      } catch {
+        doc.setDrawColor(40, 70, 120);
+        doc.setLineWidth(0.5);
+        doc.circle(leftLogoX + logoSize / 2, cursorY + logoSize / 2, logoSize * 0.44, 'S');
+      }
+    } else {
+      const cx = leftLogoX + logoSize / 2;
+      const cy = cursorY + logoSize / 2;
+      doc.setDrawColor(30, 64, 120);
+      doc.setLineWidth(0.6);
+      doc.circle(cx, cy, logoSize * 0.44, 'S');
+      doc.setLineWidth(0.25);
+      doc.circle(cx, cy, logoSize * 0.32, 'S');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(5.5);
+      doc.setTextColor(30, 64, 120);
+      doc.text('BGN', cx, cy + 1.5, { align: 'center' });
+    }
+
+    // Right Logo (SPPG / BGN Green Emblem)
+    if (config.logoRightDataUrl) {
+      try {
+        doc.addImage(config.logoRightDataUrl, rightLogoX, cursorY, logoSize, logoSize);
+      } catch {
+        doc.setDrawColor(22, 101, 52);
+        doc.setLineWidth(0.5);
+        doc.circle(rightLogoX + logoSize / 2, cursorY + logoSize / 2, logoSize * 0.44, 'S');
+      }
+    } else {
+      const cx = rightLogoX + logoSize / 2;
+      const cy = cursorY + logoSize / 2;
+      doc.setDrawColor(22, 101, 52);
+      doc.setLineWidth(0.6);
+      doc.circle(cx, cy, logoSize * 0.44, 'S');
+      doc.setLineWidth(0.25);
+      doc.circle(cx, cy, logoSize * 0.32, 'S');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(5.2);
+      doc.setTextColor(22, 101, 52);
+      doc.text('SPPG', cx, cy + 1.5, { align: 'center' });
+    }
+
+    // Center Kop Lines
+    const kopCenterX = pageWidth / 2;
+    const kopMaxW = contentWidth - logoSize * 2 - 12;
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(30, 41, 59);
+    doc.setFontSize(orientation === 'landscape' ? 11.5 : 10.2);
+    doc.text((config.headerLine1 || 'BADAN GIZI NASIONAL').toUpperCase(), kopCenterX, cursorY + 4.0, {
+      align: 'center',
+      maxWidth: kopMaxW,
+    });
+    doc.setFontSize(orientation === 'landscape' ? 11.0 : 9.8);
+    doc.text(
+      (config.headerLine2 || 'SATUAN PELAYANAN PEMENUHAN GIZI').toUpperCase(),
+      kopCenterX,
+      cursorY + 8.6,
+      { align: 'center', maxWidth: kopMaxW }
+    );
+    doc.setFontSize(orientation === 'landscape' ? 9.5 : 8.6);
+    doc.text(
+      (config.headerLine3 || '').toUpperCase(),
+      kopCenterX,
+      cursorY + 13.0,
+      { align: 'center', maxWidth: kopMaxW }
+    );
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(orientation === 'landscape' ? 7.8 : 7.0);
+    doc.setTextColor(71, 85, 105);
+    doc.text(config.headerLine4 || '', kopCenterX, cursorY + 17.0, {
+      align: 'center',
+      maxWidth: kopMaxW,
+    });
+
+    cursorY += Math.max(logoSize, 18) + 2.5;
+
+    // Double horizontal kop line
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.7);
+    doc.line(marginX, cursorY, pageWidth - marginX, cursorY);
+    doc.setLineWidth(0.25);
+    doc.line(marginX, cursorY + 1.1, pageWidth - marginX, cursorY + 1.1);
+
+    cursorY += 7.5;
+
+    // 2. Centered Bold Italic Form Title
+    const sheetTitle =
+      sheetType === 'masak'
+        ? config.titleMasak || 'LAPORAN SUHU MAKANAN MASAK'
+        : config.titleOmpreng || 'LAPORAN SUHU MAKANAN MASUK OMPRENG';
+
+    doc.setFont('helvetica', 'bolditalic');
+    doc.setFontSize(orientation === 'landscape' ? 10.8 : 9.8);
+    doc.setTextColor(0, 0, 0);
+    doc.text(sheetTitle.toUpperCase(), pageWidth / 2, cursorY, { align: 'center' });
+
+    cursorY += 6.5;
+
+    // 3. Bulan : ...
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text(`Bulan : ${config.bulanLabel || '-'}`, marginX + 1, cursorY);
+    cursorY += 3;
+
+    // 4. 4-Column Table with rowSpan for Tanggal & Paraf
+    const sheetBlocks = blocks
+      .filter((b) => b.sheetType === sheetType)
+      .sort((a, b) => a.blockOrder - b.blockOrder);
+
+    const effectiveBlocks: FoodTempDayBlock[] =
+      sheetBlocks.length > 0
+        ? sheetBlocks
+        : Array.from({ length: 5 }, (_, idx) => ({
+            id: `empty_${idx}`,
+            uid: config.uid,
+            monthKey: config.monthKey,
+            sheetType,
+            blockOrder: idx + 1,
+            tanggal: '',
+            paraf: '',
+            items: Array.from({ length: 5 }, () => ({ namaMakanan: '', suhu: '' })),
+          }));
+
+    const bodyRows: unknown[][] = [];
+    effectiveBlocks.forEach((block) => {
+      const items =
+        block.items && block.items.length > 0
+          ? block.items
+          : [{ namaMakanan: '', suhu: '' }];
+      const span = items.length;
+
+      items.forEach((item, idx) => {
+        if (idx === 0) {
+          bodyRows.push([
+            {
+              content: block.tanggal || '',
+              rowSpan: span,
+              styles: { halign: 'center', valign: 'middle', fontStyle: 'bold' },
+            },
+            {
+              content: item.namaMakanan || '',
+              styles: { halign: 'left', valign: 'middle' },
+            },
+            {
+              content: item.suhu || '',
+              styles: { halign: 'center', valign: 'middle' },
+            },
+            {
+              content: block.paraf || '',
+              rowSpan: span,
+              styles: { halign: 'center', valign: 'middle' },
+            },
+          ]);
+        } else {
+          bodyRows.push([
+            {
+              content: item.namaMakanan || '',
+              styles: { halign: 'left', valign: 'middle' },
+            },
+            {
+              content: item.suhu || '',
+              styles: { halign: 'center', valign: 'middle' },
+            },
+          ]);
+        }
+      });
+    });
+
+    const grayBg: [number, number, number] = [217, 217, 217];
+    const colWidths =
+      orientation === 'landscape'
+        ? { tgl: 52, nama: 148, suhu: 50, paraf: 48 }
+        : { tgl: 35, nama: 87, suhu: 34, paraf: 31 };
+
+    autoTable(doc, {
+      startY: cursorY,
+      margin: { left: marginX, right: marginX, top: 12, bottom: 14 },
+      theme: 'grid',
+      showHead: 'everyPage',
+      rowPageBreak: 'avoid',
+      styles: {
+        font: 'helvetica',
+        fontSize: orientation === 'landscape' ? 8.8 : 8.0,
+        textColor: [0, 0, 0],
+        lineColor: [0, 0, 0],
+        lineWidth: 0.28,
+        minCellHeight: 6.8,
+        cellPadding: { top: 1.4, right: 2.2, bottom: 1.4, left: 2.2 },
+        overflow: 'linebreak',
+      },
+      headStyles: {
+        fillColor: grayBg,
+        textColor: [0, 0, 0],
+        fontStyle: 'bold',
+        halign: 'center',
+        valign: 'middle',
+        lineColor: [0, 0, 0],
+        lineWidth: 0.3,
+        minCellHeight: 8.5,
+      },
+      head: [
+        [
+          labels.tanggal,
+          labels.namaMakanan,
+          labels.suhuMakanan,
+          labels.paraf,
+        ],
+      ],
+      body: bodyRows as never[],
+      columnStyles: {
+        0: { cellWidth: colWidths.tgl, halign: 'center' },
+        1: { cellWidth: colWidths.nama, halign: 'left' },
+        2: { cellWidth: colWidths.suhu, halign: 'center' },
+        3: { cellWidth: colWidths.paraf, halign: 'center' },
+      },
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const finalTableY = (doc as any).lastAutoTable?.finalY || cursorY + 80;
+    let sigY = finalTableY + 10;
+    if (sigY + 30 > pageHeight - 10) {
+      doc.addPage();
+      sigY = 20;
+    }
+
+    const sigX = marginX + contentWidth * 0.62;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(0, 0, 0);
+    doc.text(config.signerLine1 || 'Pengawas Gizi', sigX, sigY);
+    doc.text(config.signerLine2 || 'SPPG', sigX, sigY + 4.8);
+    if (config.signerName) {
+      doc.setFont('helvetica', 'bold');
+      doc.text(config.signerName, sigX, sigY + 23);
+    }
+  });
+
+  const safeBulan = (config.bulanLabel || 'BULAN').replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase();
+  const suffix =
+    sheetsToExport.length === 2
+      ? 'MASAK_DAN_OMPRENG'
+      : sheetsToExport[0] === 'masak'
+      ? 'MAKANAN_MASAK'
+      : 'MASUK_OMPRENG';
+  doc.save(`LAPORAN_SUHU_${suffix}_${safeBulan}.pdf`);
+}
+
+function drawBgnStandardKopHeader(params: {
+  doc: jsPDF;
+  startX: number;
+  startY: number;
+  width: number;
+  logoDataUrl?: string;
+  line1: string;
+  line2: string;
+  line3: string;
+  alamat: string;
+}): number {
+  const { doc, startX, startY, width, logoDataUrl, line1, line2, line3, alamat } = params;
+  const logoSize = 15;
+  const logoX = startX + 2;
+  const logoY = startY + 1;
+
+  if (logoDataUrl) {
+    try {
+      doc.addImage(logoDataUrl, logoX, logoY, logoSize, logoSize);
+    } catch {
+      doc.setDrawColor(30, 64, 120);
+      doc.setLineWidth(0.5);
+      doc.circle(logoX + logoSize / 2, logoY + logoSize / 2, logoSize * 0.42, 'S');
+    }
+  } else {
+    const cx = logoX + logoSize / 2;
+    const cy = logoY + logoSize / 2;
+    doc.setDrawColor(30, 64, 120);
+    doc.setLineWidth(0.6);
+    doc.circle(cx, cy, logoSize * 0.43, 'S');
+    doc.setLineWidth(0.25);
+    doc.circle(cx, cy, logoSize * 0.31, 'S');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(5.4);
+    doc.setTextColor(30, 64, 120);
+    doc.text('BGN', cx, cy + 1.4, { align: 'center' });
+  }
+
+  const centerX = startX + width / 2;
+  const textMaxW = width - logoSize * 2 - 8;
+
+  doc.setTextColor(0, 0, 0);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.text((line1 || 'BADAN GIZI NASIONAL').toUpperCase(), centerX, startY + 4.5, {
+    align: 'center',
+    maxWidth: textMaxW,
+  });
+  doc.setFontSize(10.0);
+  doc.text((line2 || 'SATUAN PELAYANAN PEMENUHAN GIZI').toUpperCase(), centerX, startY + 9.0, {
+    align: 'center',
+    maxWidth: textMaxW,
+  });
+  doc.setFontSize(9.6);
+  doc.text((line3 || 'SPPG').toUpperCase(), centerX, startY + 13.5, {
+    align: 'center',
+    maxWidth: textMaxW,
+  });
+
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(8.2);
+  const alamatTxt = alamat || 'Alamat : -';
+  doc.text(alamatTxt, centerX, startY + 18.0, { align: 'center', maxWidth: textMaxW });
+  const textW = Math.min(textMaxW, doc.getTextWidth(alamatTxt));
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.25);
+  doc.line(centerX - textW / 2, startY + 18.7, centerX + textW / 2, startY + 18.7);
+
+  return startY + 21.5;
+}
+
+function drawVerticalSideStrip(
+  doc: jsPDF,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  label: string
+): void {
+  doc.setFillColor(255, 255, 0);
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.3);
+  doc.rect(x, y, width, height, 'FD');
+
+  const chars = (label || 'SPPG').replace(/\s+/g, '').split('');
+  if (chars.length === 0) return;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(0, 0, 0);
+
+  const step = Math.min(9.5, (height - 16) / Math.max(1, chars.length));
+  const totalTxtH = step * chars.length;
+  let cy = y + (height - totalTxtH) / 2 + step * 0.72;
+  chars.forEach((ch) => {
+    doc.text(ch, x + width / 2, cy, { align: 'center' });
+    cy += step;
+  });
+}
+
+function fmtPdfRp(val: number): string {
+  if (!Number.isFinite(val) || Math.round(val) === 0) return '-';
+  return Math.round(val).toLocaleString('id-ID');
+}
+
+function fmtPdfNum(val: number, decimals = 1): string {
+  if (!Number.isFinite(val) || val === 0) return '';
+  return val.toFixed(decimals);
+}
+
+export function exportUpdatePmToF4Pdf(params: {
+  record: DailyPmRecord;
+  viewMode?: 'specific' | 'summary' | 'both';
+  orientation?: PdfOrientation;
+}): void {
+  const { record, viewMode = 'both', orientation = 'portrait' } = params;
+  const f4Format: [number, number] =
+    orientation === 'landscape' ? [330, 215] : [215, 330];
+
+  const doc = new jsPDF({
+    orientation,
+    unit: 'mm',
+    format: f4Format,
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const marginX = orientation === 'landscape' ? 14 : 11;
+  const contentWidth = pageWidth - marginX * 2;
+  const dateDisplay = formatIndonesianFullDate(record.dateIso);
+  const summary = computePmSummary(record);
+
+  const greenBg: [number, number, number] = [0, 176, 80];
+  const orangeBg: [number, number, number] = [255, 102, 0];
+  const yellowBg: [number, number, number] = [255, 255, 0];
+  const limeBg: [number, number, number] = [204, 255, 0];
+
+  const renderPmSheetHeader = (sheetTitle: string): number => {
+    let y = drawBgnStandardKopHeader({
+      doc,
+      startX: marginX,
+      startY: 10,
+      width: contentWidth,
+      logoDataUrl: record.logoDataUrl,
+      line1: record.headerLine1,
+      line2: record.headerLine2,
+      line3: record.headerLine3,
+      alamat: record.headerAlamat,
+    });
+    y += 2;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.setTextColor(0, 0, 0);
+    doc.text(sheetTitle.toUpperCase(), pageWidth / 2, y, { align: 'center' });
+    y += 2.5;
+
+    doc.setFillColor(limeBg[0], limeBg[1], limeBg[2]);
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.3);
+    doc.rect(marginX, y, contentWidth, 6.5, 'FD');
+    doc.setFontSize(9.5);
+    doc.text(dateDisplay, pageWidth / 2, y + 4.5, { align: 'center' });
+    return y + 6.5;
+  };
+
+  const buildPmHead = (): unknown[][] => [
+    [
+      {
+        content: 'DATA PENERIMA KELOMPOK SASARAN',
+        colSpan: 2,
+        styles: { fillColor: greenBg, textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' },
+      },
+      {
+        content: 'JUMLAH PENERIMA MANFAAT',
+        colSpan: 4,
+        styles: { fillColor: greenBg, textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' },
+      },
+      {
+        content: 'TOTAL PENERIMA\nMANFAAT',
+        rowSpan: 3,
+        styles: {
+          fillColor: greenBg,
+          textColor: [0, 0, 0],
+          fontStyle: 'bold',
+          halign: 'center',
+          valign: 'middle',
+        },
+      },
+    ],
+    [
+      {
+        content: 'No.',
+        rowSpan: 2,
+        styles: { fillColor: greenBg, textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center', valign: 'middle' },
+      },
+      {
+        content: 'Kelompok Sasaran',
+        rowSpan: 2,
+        styles: { fillColor: greenBg, textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center', valign: 'middle' },
+      },
+      {
+        content: 'Tanpa Alergi',
+        colSpan: 2,
+        styles: { fillColor: greenBg, textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' },
+      },
+      {
+        content: 'Diet/Alergi',
+        colSpan: 2,
+        styles: { fillColor: orangeBg, textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' },
+      },
+    ],
+    [
+      { content: 'Porsi Besar', styles: { fillColor: greenBg, textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' } },
+      { content: 'Porsi Kecil', styles: { fillColor: greenBg, textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' } },
+      { content: 'Porsi Besar', styles: { fillColor: orangeBg, textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' } },
+      { content: 'Porsi Kecil', styles: { fillColor: orangeBg, textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' } },
+    ],
+  ];
+
+  const colW =
+    orientation === 'landscape'
+      ? [14, 118, 36, 36, 36, 36, 26]
+      : [11, 70, 22, 22, 22, 22, 24];
+
+  let pageStarted = false;
+
+  if (viewMode === 'specific' || viewMode === 'both') {
+    pageStarted = true;
+    const startY = renderPmSheetHeader(record.titleSpecific || 'UPDATE DATA SPESIFIK');
+    const sortedSpecific = [...record.specificRows].sort((a, b) => a.rowOrder - b.rowOrder);
+
+    let specTBesar = 0;
+    let specTKecil = 0;
+    let specDBesar = 0;
+    let specDKecil = 0;
+
+    const specBody: unknown[][] = sortedSpecific.map((r, idx) => {
+      const tb = Math.max(0, Math.round(r.tanpaAlergiBesar || 0));
+      const tk = Math.max(0, Math.round(r.tanpaAlergiKecil || 0));
+      const db = Math.max(0, Math.round(r.dietAlergiBesar || 0));
+      const dk = Math.max(0, Math.round(r.dietAlergiKecil || 0));
+      specTBesar += tb;
+      specTKecil += tk;
+      specDBesar += db;
+      specDKecil += dk;
+      const tot = tb + tk + db + dk;
+      return [
+        String(idx + 1),
+        r.namaSekolah || '',
+        tb > 0 ? String(tb) : '',
+        tk > 0 ? String(tk) : '',
+        db > 0 ? String(db) : '',
+        dk > 0 ? String(dk) : '',
+        tot > 0 ? String(tot) : '',
+      ];
+    });
+
+    if (specBody.length === 0) {
+      specBody.push(['1', '-', '', '', '', '', '0']);
+    }
+
+    const specGrand = specTBesar + specTKecil + specDBesar + specDKecil;
+    specBody.push([
+      {
+        content: 'Sub. Total',
+        colSpan: 2,
+        styles: { fillColor: yellowBg, fontStyle: 'bold', halign: 'center' },
+      },
+      { content: String(specTBesar), styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' } },
+      { content: String(specTKecil), styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' } },
+      { content: String(specDBesar), styles: { fillColor: orangeBg, fontStyle: 'bold', halign: 'center' } },
+      { content: String(specDKecil), styles: { fillColor: orangeBg, fontStyle: 'bold', halign: 'center' } },
+      { content: String(specGrand), styles: { fillColor: yellowBg, fontStyle: 'bold', halign: 'center' } },
+    ]);
+
+    autoTable(doc, {
+      startY,
+      margin: { left: marginX, right: marginX, top: 10, bottom: 10 },
+      theme: 'grid',
+      styles: {
+        font: 'helvetica',
+        fontSize: orientation === 'landscape' ? 8.5 : 8.0,
+        textColor: [0, 0, 0],
+        lineColor: [0, 0, 0],
+        lineWidth: 0.25,
+        cellPadding: 1.5,
+      },
+      head: buildPmHead() as never[],
+      body: specBody as never[],
+      columnStyles: {
+        0: { cellWidth: colW[0], halign: 'center' },
+        1: { cellWidth: colW[1], halign: 'left' },
+        2: { cellWidth: colW[2], halign: 'center' },
+        3: { cellWidth: colW[3], halign: 'center' },
+        4: { cellWidth: colW[4], halign: 'center' },
+        5: { cellWidth: colW[5], halign: 'center' },
+        6: { cellWidth: colW[6], halign: 'center' },
+      },
+    });
+  }
+
+  if (viewMode === 'summary' || viewMode === 'both') {
+    if (pageStarted) doc.addPage();
+    const startY = renderPmSheetHeader(record.titleSummary || 'UPDATE DATA PENERIMA MANFAAT');
+
+    const sumBody: unknown[][] = summary.rows.map((r) => [
+      String(r.no),
+      r.label,
+      r.tanpaAlergiBesar > 0 ? String(r.tanpaAlergiBesar) : '',
+      r.tanpaAlergiKecil > 0 ? String(r.tanpaAlergiKecil) : '',
+      r.dietAlergiBesar > 0 ? String(r.dietAlergiBesar) : '',
+      r.dietAlergiKecil > 0 ? String(r.dietAlergiKecil) : '',
+      r.total > 0 ? String(r.total) : '',
+    ]);
+
+    sumBody.push([
+      {
+        content: 'Sub. Total',
+        colSpan: 2,
+        styles: { fillColor: yellowBg, fontStyle: 'bold', halign: 'center' },
+      },
+      { content: String(summary.subTotal.tanpaAlergiBesar), styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' } },
+      { content: String(summary.subTotal.tanpaAlergiKecil), styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' } },
+      { content: String(summary.subTotal.dietAlergiBesar), styles: { fillColor: orangeBg, fontStyle: 'bold', halign: 'center' } },
+      { content: String(summary.subTotal.dietAlergiKecil), styles: { fillColor: orangeBg, fontStyle: 'bold', halign: 'center' } },
+      { content: String(summary.subTotal.total), styles: { fillColor: yellowBg, fontStyle: 'bold', halign: 'center' } },
+    ]);
+
+    autoTable(doc, {
+      startY,
+      margin: { left: marginX, right: marginX, top: 10, bottom: 10 },
+      theme: 'grid',
+      styles: {
+        font: 'helvetica',
+        fontSize: orientation === 'landscape' ? 8.8 : 8.2,
+        textColor: [0, 0, 0],
+        lineColor: [0, 0, 0],
+        lineWidth: 0.25,
+        cellPadding: 1.8,
+      },
+      head: buildPmHead() as never[],
+      body: sumBody as never[],
+      columnStyles: {
+        0: { cellWidth: colW[0], halign: 'center' },
+        1: { cellWidth: colW[1], halign: 'left' },
+        2: { cellWidth: colW[2], halign: 'center' },
+        3: { cellWidth: colW[3], halign: 'center' },
+        4: { cellWidth: colW[4], halign: 'center' },
+        5: { cellWidth: colW[5], halign: 'center' },
+        6: { cellWidth: colW[6], halign: 'center' },
+      },
+    });
+  }
+
+  doc.save(`UPDATE_PM_${record.dateIso}.pdf`);
+}
+
+export function exportFoodCostNutritionToF4Pdf(params: {
+  plan: FoodCostDayPlan;
+  pmRecord: DailyPmRecord | null;
+  worksheetIds?: string[];
+  orientation?: PdfOrientation;
+}): void {
+  const { plan, pmRecord, worksheetIds, orientation = 'landscape' } = params;
+  const worksheets =
+    worksheetIds && worksheetIds.length > 0
+      ? plan.worksheets.filter((w) => worksheetIds.includes(w.id))
+      : plan.worksheets;
+
+  if (worksheets.length === 0) return;
+
+  const f4Format: [number, number] =
+    orientation === 'landscape' ? [330, 215] : [215, 330];
+
+  const doc = new jsPDF({
+    orientation,
+    unit: 'mm',
+    format: f4Format,
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const marginX = 6;
+  const marginY = 6;
+  const stripW = 9;
+  const rightX = marginX + stripW;
+  const workW = pageWidth - marginX * 2 - stripW;
+  const pmSummary = computePmSummary(pmRecord);
+  const dateDisplay = formatIndonesianFullDate(plan.dateIso);
+
+  const greenBg: [number, number, number] = [0, 176, 80];
+  const limeBg: [number, number, number] = [204, 255, 0];
+  const greyBg: [number, number, number] = [191, 191, 191];
+  const peachBg: [number, number, number] = [244, 176, 132];
+  const passGreenBg: [number, number, number] = [146, 208, 80];
+  const failRedBg: [number, number, number] = [255, 0, 0];
+
+  worksheets.forEach((ws, wsIdx) => {
+    if (wsIdx > 0) doc.addPage();
+    const computed = computeFoodCostWorksheet(ws, pmSummary);
+
+    // Left yellow strip full height
+    drawVerticalSideStrip(
+      doc,
+      marginX,
+      marginY,
+      stripW,
+      pageHeight - marginY * 2,
+      ws.sideLabel || 'SPPG'
+    );
+
+    // Top Kop Header
+    let y = drawBgnStandardKopHeader({
+      doc,
+      startX: rightX,
+      startY: marginY + 1,
+      width: workW,
+      logoDataUrl: plan.logoDataUrl,
+      line1: plan.headerLine1,
+      line2: plan.headerLine2,
+      line3: plan.headerLine3,
+      alamat: plan.headerAlamat,
+    });
+
+    y += 1.5;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.8);
+    doc.setTextColor(0, 0, 0);
+    doc.text((ws.title || 'NILAI GIZI DAN FOOD COST').toUpperCase(), rightX + workW / 2, y, {
+      align: 'center',
+      maxWidth: workW - 4,
+    });
+    y += 2;
+
+    // Date bar
+    doc.setFillColor(limeBg[0], limeBg[1], limeBg[2]);
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.25);
+    doc.rect(rightX, y, workW, 5.5, 'FD');
+    doc.setFontSize(8.5);
+    doc.text(dateDisplay, rightX + workW / 2, y + 3.9, { align: 'center' });
+    y += 5.5;
+
+    // Top AKG & Food Cost summary grid (10 columns matching Excel structure)
+    const statusColor = (pct: number): [number, number, number] =>
+      pct >= 90 && pct <= 110 ? passGreenBg : failRedBg;
+
+    const scaleW = workW / 303;
+    const sw = (n: number) => n * scaleW;
+
+    const summaryBody: unknown[][] = [
+      [
+        {
+          content: 'Nilai Gizi Berdasarkan AKG',
+          colSpan: 6,
+          styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' },
+        },
+        {
+          content: 'JUMLAH',
+          colSpan: 2,
+          styles: { fillColor: greyBg, fontStyle: 'bold', halign: 'center' },
+        },
+        {
+          content: `Rp   ${fmtPdfRp(computed.subTotalHarga)}`,
+          styles: { fillColor: [255, 242, 204], fontStyle: 'bold', halign: 'right' },
+        },
+      ],
+      [
+        {
+          content: 'NILAI GIZI MENU',
+          styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' },
+        },
+        { content: computed.nutritionTotals.energi.toFixed(1), styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' } },
+        { content: computed.nutritionTotals.protein.toFixed(1), styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' } },
+        { content: computed.nutritionTotals.lemak.toFixed(1), styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' } },
+        { content: computed.nutritionTotals.kh.toFixed(1), styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' } },
+        { content: computed.nutritionTotals.serat.toFixed(1), styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' } },
+        {
+          content: `BUMBU  ${ws.bumbuPercent}%`,
+          colSpan: 2,
+          styles: { fillColor: greyBg, fontStyle: 'bold', halign: 'center' },
+        },
+        {
+          content: `Rp   ${fmtPdfRp(computed.bumbuAmount)}`,
+          styles: { fillColor: greyBg, fontStyle: 'bold', halign: 'right' },
+        },
+      ],
+      [
+        {
+          content:
+            ws.portionScope === 'kecil'
+              ? 'RUJUKAN AKG PORSI KECIL 20-25%'
+              : ws.portionScope === 'besar'
+              ? 'RUJUKAN AKG PORSI BESAR 30-35%'
+              : 'RUJUKAN AKG SASARAN',
+          styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' },
+        },
+        { content: String(Math.round(computed.akgRef.energi)), styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' } },
+        { content: String(Math.round(computed.akgRef.protein)), styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' } },
+        { content: String(Math.round(computed.akgRef.lemak)), styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' } },
+        { content: String(Math.round(computed.akgRef.karbohidrat)), styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' } },
+        { content: String(Math.round(computed.akgRef.serat)), styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' } },
+        {
+          content: `JUMLAH + BUMBU ${ws.bumbuPercent}%`,
+          colSpan: 2,
+          styles: { fillColor: greyBg, fontStyle: 'bold', halign: 'center' },
+        },
+        {
+          content: `Rp   ${fmtPdfRp(computed.totalWithBumbu)}`,
+          styles: { fillColor: greyBg, fontStyle: 'bold', halign: 'right' },
+        },
+      ],
+      [
+        {
+          content: '% KEBUTUHAN 90-110%',
+          styles: { fillColor: greenBg, fontStyle: 'bold', halign: 'center' },
+        },
+        {
+          content: computed.percentNeeds.energi.toFixed(0),
+          styles: { fillColor: statusColor(computed.percentNeeds.energi), fontStyle: 'bold', halign: 'center' },
+        },
+        {
+          content: computed.percentNeeds.protein.toFixed(0),
+          styles: { fillColor: statusColor(computed.percentNeeds.protein), fontStyle: 'bold', halign: 'center' },
+        },
+        {
+          content: computed.percentNeeds.lemak.toFixed(0),
+          styles: { fillColor: statusColor(computed.percentNeeds.lemak), fontStyle: 'bold', halign: 'center' },
+        },
+        {
+          content: computed.percentNeeds.kh.toFixed(0),
+          styles: { fillColor: statusColor(computed.percentNeeds.kh), fontStyle: 'bold', halign: 'center' },
+        },
+        {
+          content: computed.percentNeeds.serat.toFixed(0),
+          styles: { fillColor: statusColor(computed.percentNeeds.serat), fontStyle: 'bold', halign: 'center' },
+        },
+        {
+          content: 'HARGA PER PORSI',
+          colSpan: 2,
+          styles: { fillColor: greyBg, fontStyle: 'bold', halign: 'center' },
+        },
+        {
+          content: `Rp   ${fmtPdfRp(computed.hargaPerPorsi)}`,
+          styles: { fillColor: failRedBg, fontStyle: 'bold', halign: 'right' },
+        },
+      ],
+    ];
+
+    autoTable(doc, {
+      startY: y,
+      margin: { left: rightX, right: marginX },
+      theme: 'grid',
+      styles: {
+        font: 'helvetica',
+        fontSize: orientation === 'landscape' ? 7.4 : 6.0,
+        textColor: [0, 0, 0],
+        lineColor: [0, 0, 0],
+        lineWidth: 0.22,
+        cellPadding: 1.0,
+      },
+      body: summaryBody as never[],
+      columnStyles: {
+        0: { cellWidth: sw(102) },
+        1: { cellWidth: sw(11) },
+        2: { cellWidth: sw(11) },
+        3: { cellWidth: sw(11) },
+        4: { cellWidth: sw(11) },
+        5: { cellWidth: sw(11) },
+        6: { cellWidth: sw(60) },
+        7: { cellWidth: sw(56) },
+        8: { cellWidth: sw(30) },
+      },
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const afterSummaryY = (doc as any).lastAutoTable?.finalY || y + 22;
+
+    // 20-column Ingredients Table matching Image 1
+    const cols20 = [
+      32, 42, 13, 15, 11, 11, 11, 11, 11, 10, 12, 14, 15, 12, 12, 10, 11, 10, 20, 26,
+    ].map((w) => sw(w));
+
+    const ingBody: unknown[][] = computed.rows.map((cr) => [
+      { content: cr.row.menuName || '', styles: { fontStyle: 'bold', halign: 'center' } },
+      { content: cr.row.bahanMakanan || '', styles: { halign: 'left' } },
+      { content: cr.row.beratBb ? String(cr.row.beratBb) : '', styles: { halign: 'center' } },
+      { content: cr.row.urt || '', styles: { halign: 'center' } },
+      { content: cr.energi.toFixed(1), styles: { halign: 'center' } },
+      { content: cr.protein.toFixed(1), styles: { halign: 'center' } },
+      { content: cr.lemak.toFixed(1), styles: { halign: 'center' } },
+      { content: cr.kh.toFixed(1), styles: { halign: 'center' } },
+      { content: cr.serat.toFixed(1), styles: { halign: 'center' } },
+      { content: String(cr.bddPercent), styles: { halign: 'center' } },
+      { content: cr.bkGram.toFixed(1), styles: { halign: 'center' } },
+      { content: String(cr.jumlahManfaat), styles: { halign: 'center' } },
+      { content: cr.totalGram.toFixed(1), styles: { halign: 'center' } },
+      { content: cr.totalKg.toFixed(1), styles: { halign: 'center' } },
+      { content: cr.potong !== null ? cr.potong.toFixed(1) : '', styles: { halign: 'center' } },
+      { content: cr.ekor !== null ? cr.ekor.toFixed(1) : '', styles: { halign: 'center' } },
+      { content: cr.lembar !== null ? cr.lembar.toFixed(1) : '', styles: { halign: 'center' } },
+      { content: cr.rak !== null ? cr.rak.toFixed(1) : '', styles: { halign: 'center' } },
+      { content: cr.row.hargaSatuan > 0 ? `Rp ${fmtPdfRp(cr.row.hargaSatuan)}` : '', styles: { halign: 'right' } },
+      { content: `Rp ${fmtPdfRp(cr.hargaTotal)}`, styles: { halign: 'right' } },
+    ]);
+
+    const minPad = Math.max(0, 14 - ingBody.length);
+    for (let i = 0; i < minPad; i += 1) {
+      ingBody.push(Array(20).fill(''));
+    }
+
+    autoTable(doc, {
+      startY: afterSummaryY,
+      margin: { left: rightX, right: marginX, top: 8, bottom: 8 },
+      theme: 'grid',
+      showHead: 'everyPage',
+      styles: {
+        font: 'helvetica',
+        fontSize: orientation === 'landscape' ? 6.5 : 5.2,
+        textColor: [0, 0, 0],
+        lineColor: [0, 0, 0],
+        lineWidth: 0.2,
+        cellPadding: 0.9,
+        valign: 'middle',
+      },
+      headStyles: {
+        fillColor: peachBg,
+        textColor: [0, 0, 0],
+        fontStyle: 'bold',
+        halign: 'center',
+        valign: 'middle',
+        lineColor: [0, 0, 0],
+        lineWidth: 0.25,
+      },
+      head: [
+        [
+          'MENU',
+          'BAHAN MAKANAN',
+          'BERAT\n(BB)',
+          'URT',
+          'ENERGI\n(kkal)',
+          'PROTEIN\n(g)',
+          'LEMAK\n(g)',
+          'KH\n(g)',
+          'SERAT\n(g)',
+          'BDD\n(%)',
+          'BK (gr)',
+          'Jumlah\nManfaat',
+          'Gram',
+          'Kg',
+          'Potong',
+          'Ekor',
+          'Lembar',
+          'Rak',
+          'Harga Satuan',
+          'Harga Total',
+        ],
+      ],
+      body: ingBody as never[],
+      columnStyles: Object.fromEntries(cols20.map((w, idx) => [idx, { cellWidth: w }])),
+    });
+  });
+
+  doc.save(`NILAI_GIZI_FOOD_COST_${plan.dateIso}.pdf`);
+}
+
+export function exportRawMaterialAndPoToF4Pdf(params: {
+  recapConfig: RawMaterialRecapDayConfig;
+  foodCostPlan: FoodCostDayPlan | null;
+  pmRecord: DailyPmRecord | null;
+  mode?: 'rekap' | 'po' | 'both';
+  orientation?: PdfOrientation;
+}): void {
+  const { recapConfig, foodCostPlan, pmRecord, mode = 'both', orientation = 'landscape' } = params;
+  const f4Format: [number, number] =
+    orientation === 'landscape' ? [330, 215] : [215, 330];
+
+  const doc = new jsPDF({
+    orientation,
+    unit: 'mm',
+    format: f4Format,
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const pmSummary = computePmSummary(pmRecord);
+  const recap = computeRawMaterialRecap(foodCostPlan, pmSummary, recapConfig);
+  const dateDisplay = formatIndonesianFullDate(recapConfig.dateIso);
+
+  const limeBg: [number, number, number] = [204, 255, 0];
+  const passGreenBg: [number, number, number] = [146, 208, 80];
+  const failRedBg: [number, number, number] = [255, 0, 0];
+  const peachBg: [number, number, number] = [244, 176, 132];
+  const yellowBg: [number, number, number] = [255, 255, 0];
+  const poBlueBg: [number, number, number] = [183, 222, 232];
+
+  let pageStarted = false;
+
+  if (mode === 'rekap' || mode === 'both') {
+    pageStarted = true;
+    const marginX = 6;
+    const marginY = 6;
+    const stripW = 9;
+    const rightX = marginX + stripW;
+    const workW = pageWidth - marginX * 2 - stripW;
+
+    drawVerticalSideStrip(
+      doc,
+      marginX,
+      marginY,
+      stripW,
+      pageHeight - marginY * 2,
+      recapConfig.sideLabel || 'REKAPAN / PO'
+    );
+
+    let y = drawBgnStandardKopHeader({
+      doc,
+      startX: rightX,
+      startY: marginY + 1,
+      width: workW,
+      logoDataUrl: recapConfig.logoDataUrl,
+      line1: recapConfig.headerLine1,
+      line2: recapConfig.headerLine2,
+      line3: recapConfig.headerLine3,
+      alamat: recapConfig.headerAlamat,
+    });
+
+    y += 2;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10.5);
+    doc.setTextColor(0, 0, 0);
+    doc.text(
+      (recapConfig.recapTitle || 'REKAPAN TOTAL KEBUTUHAN BAHAN BAKU KESELURUHAN').toUpperCase(),
+      rightX + workW / 2,
+      y,
+      { align: 'center', maxWidth: workW - 4 }
+    );
+    y += 2.2;
+
+    doc.setFillColor(limeBg[0], limeBg[1], limeBg[2]);
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.25);
+    doc.rect(rightX, y, workW, 5.8, 'FD');
+    doc.setFontSize(8.8);
+    doc.text(dateDisplay, rightX + workW / 2, y + 4.1, { align: 'center' });
+    y += 5.8;
+
+    const sw = (n: number) => (n * workW) / 302;
+    const selisihBg = recap.selisihRab >= 0 ? passGreenBg : failRedBg;
+    const selisihPrefix = recap.selisihRab < 0 ? '-Rp ' : 'Rp ';
+
+    const topSummaryBody: unknown[][] = [
+      [
+        { content: 'TOTAL PENERIMA MANFAAT', colSpan: 2, styles: { fillColor: passGreenBg, fontStyle: 'bold', halign: 'center' } },
+        { content: 'PORSI\nKECIL', styles: { fillColor: passGreenBg, fontStyle: 'bold', halign: 'center' } },
+        { content: 'PORSI\nBESAR', styles: { fillColor: passGreenBg, fontStyle: 'bold', halign: 'center' } },
+        { content: `BUMBU ${recap.bumbuPercent}%`, colSpan: 2, styles: { fillColor: passGreenBg, fontStyle: 'bold', halign: 'center' } },
+        { content: 'RAB PORSI KECIL', colSpan: 2, styles: { fillColor: passGreenBg, fontStyle: 'bold', halign: 'center' } },
+        { content: 'RAB PORSI BESAR', colSpan: 2, styles: { fillColor: passGreenBg, fontStyle: 'bold', halign: 'center' } },
+        { content: 'TOTAL RAB', styles: { fillColor: passGreenBg, fontStyle: 'bold', halign: 'center' } },
+        { content: 'SELISIH', styles: { fillColor: passGreenBg, fontStyle: 'bold', halign: 'center' } },
+      ],
+      [
+        { content: String(recap.totalPenerimaManfaat), colSpan: 2, styles: { fontStyle: 'bold', halign: 'center' } },
+        { content: String(recap.porsiKecilCount), styles: { fontStyle: 'bold', halign: 'center' } },
+        { content: String(recap.porsiBesarCount), styles: { fontStyle: 'bold', halign: 'center' } },
+        { content: `Rp  ${fmtPdfRp(recap.bumbuTotalRp)}`, colSpan: 2, styles: { fontStyle: 'bold', halign: 'right' } },
+        { content: `Rp  ${fmtPdfRp(recap.rabPorsiKecilTotal)}`, colSpan: 2, styles: { fontStyle: 'bold', halign: 'right' } },
+        { content: `Rp  ${fmtPdfRp(recap.rabPorsiBesarTotal)}`, colSpan: 2, styles: { fontStyle: 'bold', halign: 'right' } },
+        { content: `Rp  ${fmtPdfRp(recap.totalRab)}`, styles: { fillColor: passGreenBg, fontStyle: 'bold', halign: 'right' } },
+        { content: `${selisihPrefix}${fmtPdfRp(Math.abs(recap.selisihRab))}`, styles: { fillColor: selisihBg, fontStyle: 'bold', halign: 'right' } },
+      ],
+      [
+        {
+          content: 'TOTAL BELANJA KEBUTUHAN BAHAN BAKU',
+          colSpan: 11,
+          styles: { fillColor: yellowBg, fontStyle: 'bold', halign: 'center' },
+        },
+        {
+          content: `Rp  ${fmtPdfRp(recap.totalBelanjaBahanBaku)}`,
+          styles: { fillColor: yellowBg, fontStyle: 'bold', halign: 'right' },
+        },
+      ],
+    ];
+
+    const colW12 = [58, 22, 22, 18, 17, 17, 18, 18, 20, 22, 32, 38].map(sw);
+
+    autoTable(doc, {
+      startY: y,
+      margin: { left: rightX, right: marginX },
+      theme: 'grid',
+      styles: {
+        font: 'helvetica',
+        fontSize: orientation === 'landscape' ? 7.4 : 5.8,
+        textColor: [0, 0, 0],
+        lineColor: [0, 0, 0],
+        lineWidth: 0.22,
+        cellPadding: 1.1,
+        valign: 'middle',
+      },
+      body: topSummaryBody as never[],
+      columnStyles: Object.fromEntries(colW12.map((w, idx) => [idx, { cellWidth: w }])),
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const afterTopY = (doc as any).lastAutoTable?.finalY || y + 20;
+
+    const recapBody: unknown[][] = recap.rows.map((r) => [
+      { content: r.bahanMakanan, styles: { halign: 'left' } },
+      { content: fmtPdfNum(r.totalPo, 1), styles: { halign: 'center', fontStyle: 'bold' } },
+      { content: fmtPdfNum(r.estimasiUsed, 1), styles: { halign: 'center' } },
+      { content: fmtPdfNum(r.kg, 1), styles: { halign: 'center' } },
+      { content: fmtPdfNum(r.potong, 1), styles: { halign: 'center' } },
+      { content: fmtPdfNum(r.ekor, 1), styles: { halign: 'center' } },
+      { content: fmtPdfNum(r.lembar, 1), styles: { halign: 'center' } },
+      { content: fmtPdfNum(r.rak, 1), styles: { halign: 'center' } },
+      { content: fmtPdfNum(r.bufferAmount, 1), styles: { halign: 'center' } },
+      { content: fmtPdfNum(r.jumlahPlusBuffer, 1), styles: { halign: 'center' } },
+      { content: r.hargaSatuan > 0 ? `Rp  ${fmtPdfRp(r.hargaSatuan)}` : 'Rp  -', styles: { halign: 'right' } },
+      { content: r.hargaTotal > 0 ? `Rp  ${fmtPdfRp(r.hargaTotal)}` : 'Rp  -', styles: { halign: 'right', fontStyle: 'bold' } },
+    ]);
+
+    const padCount = Math.max(0, 16 - recapBody.length);
+    for (let i = 0; i < padCount; i += 1) {
+      recapBody.push(Array(12).fill(''));
+    }
+
+    autoTable(doc, {
+      startY: afterTopY,
+      margin: { left: rightX, right: marginX, top: 8, bottom: 8 },
+      theme: 'grid',
+      showHead: 'everyPage',
+      styles: {
+        font: 'helvetica',
+        fontSize: orientation === 'landscape' ? 7.6 : 6.0,
+        textColor: [0, 0, 0],
+        lineColor: [0, 0, 0],
+        lineWidth: 0.22,
+        cellPadding: 1.2,
+        valign: 'middle',
+      },
+      headStyles: {
+        fillColor: peachBg,
+        textColor: [0, 0, 0],
+        fontStyle: 'bold',
+        halign: 'center',
+        valign: 'middle',
+        lineColor: [0, 0, 0],
+        lineWidth: 0.25,
+      },
+      head: [
+        [
+          'BAHAN MAKANAN',
+          'Total PO',
+          'Estimasi\nBuffer',
+          'Kg',
+          'Potong',
+          'Ekor',
+          'Lembar',
+          'Rak',
+          `Buffer ${recapConfig.bufferPercent}%`,
+          'Jumlah +\nBuffer',
+          'Harga Satuan',
+          'Harga Total',
+        ],
+      ],
+      body: recapBody as never[],
+      columnStyles: Object.fromEntries(colW12.map((w, idx) => [idx, { cellWidth: w }])),
+    });
+  }
+
+  if (mode === 'po' || mode === 'both') {
+    if (pageStarted) doc.addPage();
+    const marginX = orientation === 'landscape' ? 14 : 11;
+    const contentWidth = pageWidth - marginX * 2;
+    let y = 8;
+
+    // Yellow-lime PO Title Banner
+    doc.setFillColor(limeBg[0], limeBg[1], limeBg[2]);
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.3);
+    doc.rect(marginX, y, contentWidth, 9.5, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.setTextColor(0, 0, 0);
+    doc.text(
+      (recapConfig.poJudul || `NOTA PESANAN HARI ${recapConfig.hariKe}`).toUpperCase(),
+      pageWidth / 2,
+      y + 6.6,
+      { align: 'center' }
+    );
+    y += 11.5;
+
+    y = drawBgnStandardKopHeader({
+      doc,
+      startX: marginX,
+      startY: y,
+      width: contentWidth,
+      logoDataUrl: recapConfig.logoDataUrl,
+      line1: recapConfig.headerLine1,
+      line2: recapConfig.headerLine2,
+      line3: recapConfig.headerLine3,
+      alamat: recapConfig.headerAlamat,
+    });
+
+    y += 3;
+    const metaRows: Array<[string, string]> = [
+      ['Dari', recapConfig.poDari || recapConfig.headerLine3 || 'SPPG'],
+      ['Kepada', recapConfig.poKepada || ''],
+      ['Alamat', recapConfig.poAlamat || ''],
+      ['Tanggal', dateDisplay],
+    ];
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9.2);
+    metaRows.forEach(([label, val]) => {
+      doc.text(label, marginX + 1, y);
+      doc.text(':', marginX + 20, y);
+      doc.text(val, marginX + 24, y, { maxWidth: contentWidth - 26 });
+      y += 5.2;
+    });
+
+    y += 2;
+    const poRows: unknown[][] = recap.rows.map((r, idx) => [
+      { content: String(idx + 1), styles: { halign: 'center' } },
+      { content: r.bahanMakanan, styles: { halign: 'left' } },
+      { content: fmtPdfNum(r.totalPo, 1), styles: { halign: 'center' } },
+      { content: r.satuanPo, styles: { halign: 'center' } },
+      { content: r.hargaSatuan > 0 ? `Rp  ${fmtPdfRp(r.hargaSatuan)}` : 'Rp  -', styles: { halign: 'right' } },
+      { content: r.hargaTotal > 0 ? `Rp  ${fmtPdfRp(r.hargaTotal)}` : 'Rp  -', styles: { halign: 'right' } },
+    ]);
+
+    const poPad = Math.max(0, 16 - poRows.length);
+    for (let i = 0; i < poPad; i += 1) {
+      poRows.push([
+        { content: String(poRows.length + 1), styles: { halign: 'center' } },
+        '',
+        '',
+        '',
+        '',
+        '',
+      ]);
+    }
+
+    poRows.push([
+      {
+        content: 'TOTAL BELANJA',
+        colSpan: 5,
+        styles: { halign: 'center', fontStyle: 'bold' },
+      },
+      {
+        content: `Rp  ${fmtPdfRp(recap.totalBelanjaBahanBaku)}`,
+        styles: { halign: 'right', fontStyle: 'bold' },
+      },
+    ]);
+
+    const poColW =
+      orientation === 'landscape'
+        ? [16, 130, 32, 32, 46, 46]
+        : [12, 74, 22, 22, 31, 32];
+
+    autoTable(doc, {
+      startY: y,
+      margin: { left: marginX, right: marginX, top: 10, bottom: 16 },
+      theme: 'grid',
+      showHead: 'everyPage',
+      styles: {
+        font: 'helvetica',
+        fontSize: orientation === 'landscape' ? 8.8 : 8.2,
+        textColor: [0, 0, 0],
+        lineColor: [0, 0, 0],
+        lineWidth: 0.25,
+        cellPadding: 1.5,
+        valign: 'middle',
+      },
+      headStyles: {
+        fillColor: poBlueBg,
+        textColor: [0, 0, 0],
+        fontStyle: 'bold',
+        halign: 'center',
+        valign: 'middle',
+        lineColor: [0, 0, 0],
+        lineWidth: 0.28,
+        minCellHeight: 8,
+      },
+      head: [['No.', 'Uraian Jenis Bahan Makanan', 'Jumlah', 'Satuan', 'Harga', 'Total']],
+      body: poRows as never[],
+      columnStyles: Object.fromEntries(poColW.map((w, idx) => [idx, { cellWidth: w }])),
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const afterPoY = (doc as any).lastAutoTable?.finalY || y + 100;
+    let sigY = afterPoY + 10;
+    if (sigY + 30 > pageHeight - 10) {
+      doc.addPage();
+      sigY = 20;
+    }
+
+    const sigX = marginX + contentWidth * 0.56;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9.5);
+    doc.setTextColor(0, 0, 0);
+    doc.text(recapConfig.poSignerLabel1 || 'Mengetahui,', sigX, sigY);
+    doc.text(
+      recapConfig.poSignerLabel2 || 'Kepala Satuan Pelayanan Pemenuhan Gizi',
+      sigX,
+      sigY + 5.2
+    );
+
+    if (recapConfig.poSignerName) {
+      const nameY = sigY + 25;
+      doc.setFont('helvetica', 'bold');
+      doc.text(recapConfig.poSignerName, sigX, nameY);
+      const nw = doc.getTextWidth(recapConfig.poSignerName);
+      doc.setLineWidth(0.35);
+      doc.line(sigX, nameY + 0.8, sigX + nw, nameY + 0.8);
+    }
+  }
+
+  doc.save(`REKAP_BAHAN_BAKU_PO_${recapConfig.dateIso}.pdf`);
+}
+
+

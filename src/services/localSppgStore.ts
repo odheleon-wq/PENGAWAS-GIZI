@@ -23,8 +23,24 @@ import type {
   TempFormConfig,
   TempMonitoringRoom,
   TempTableLabels,
+  FoodTempColumnLabels,
+  FoodTempDayBlock,
+  FoodTempFormConfig,
+  FoodTempItemRow,
+  FoodTempSheetType,
+  TkpiSyncConfig,
+  DailyPmRecord,
+  FoodCostDayPlan,
+  RawMaterialRecapDayConfig,
+  MasterMenuPlan,
 } from '../types';
 import { getPeriodeLabel, INDONESIAN_MONTHS, parseMonthKey } from '../utils/dateUtils';
+import { getDefaultLogoSettings, normalizeLogoSettings } from '../utils/logoResolver';
+import {
+  DEFAULT_MASTER_MENU_ROW_LABELS,
+  formatMasterMenuDefaultTitle,
+  generateMasterMenuWeeks,
+} from '../utils/masterMenuHelper';
 
 export const LOCAL_WORKSPACE_UID = 'local_workspace';
 
@@ -208,6 +224,7 @@ export function getInitialDirectProfile(): SppgUserProfile {
     provinsi: 'SULAWESI TENGGARA',
     namaSppi: 'LA ODE MUHAMMAD SUKRI YUSUF, S.Tr.Gz',
     nomorHp: '082271095251',
+    logoSettings: getDefaultLogoSettings(),
   };
 }
 
@@ -236,6 +253,7 @@ export async function saveLocalUserProfile(
     provinsi: clampString(input.provinsi.toUpperCase(), 100),
     namaSppi: clampString(input.namaSppi, 150),
     nomorHp: clampString(input.nomorHp, 30),
+    logoSettings: normalizeLogoSettings(input.logoSettings ?? existing?.logoSettings),
   };
   await writeKey('profile', next);
 }
@@ -447,6 +465,11 @@ export async function saveLocalSampleFormConfig(
     uid: LOCAL_WORKSPACE_UID,
     monthKey,
     logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    logoWidthPx: input.logoWidthPx || 56,
+    logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    logoRightWidthPx: input.logoRightWidthPx || 56,
+    followGlobalLeftLogo: input.followGlobalLeftLogo !== false,
+    followGlobalRightLogo: input.followGlobalRightLogo !== false,
     logoCaption: clampString(input.logoCaption, 80),
     unitName: clampString(input.unitName, 150),
     formLabel: clampString(input.formLabel, 60),
@@ -546,6 +569,11 @@ export async function saveLocalTempFormConfig(
     uid: LOCAL_WORKSPACE_UID,
     monthKey,
     logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    logoWidthPx: input.logoWidthPx || 56,
+    logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    logoRightWidthPx: input.logoRightWidthPx || 56,
+    followGlobalLeftLogo: input.followGlobalLeftLogo !== false,
+    followGlobalRightLogo: input.followGlobalRightLogo !== false,
     logoCaption: clampString(input.logoCaption, 80),
     unitName: clampString(input.unitName, 150),
     formLabel: clampString(input.formLabel, 60),
@@ -768,6 +796,11 @@ export async function saveLocalFreezerFormConfig(
     uid: LOCAL_WORKSPACE_UID,
     monthKey,
     logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    logoWidthPx: input.logoWidthPx || 56,
+    logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    logoRightWidthPx: input.logoRightWidthPx || 56,
+    followGlobalLeftLogo: input.followGlobalLeftLogo !== false,
+    followGlobalRightLogo: input.followGlobalRightLogo !== false,
     logoCaption: clampString(input.logoCaption, 80),
     unitName: clampString(input.unitName, 150),
     formLabel: clampString(input.formLabel, 60),
@@ -990,5 +1023,431 @@ export async function deleteLocalFreezerLogRow(
   await writeKey(`freezerRows:${monthKey}:${machineId}`, map);
 }
 
+// --- Laporan Suhu Makanan Masak & Masuk Ompreng ---
+
+function sanitizeFoodItems(items: FoodTempItemRow[]): FoodTempItemRow[] {
+  const normalized = (items || []).slice(0, 20).map((item) => ({
+    namaMakanan: clampString(item.namaMakanan || '', 150),
+    suhu: clampString(item.suhu || '', 30),
+  }));
+  while (normalized.length === 0) {
+    normalized.push({ namaMakanan: '', suhu: '' });
+  }
+  return normalized;
+}
+
+export function subscribeLocalFoodTempFormConfig(
+  monthKey: string,
+  onData: (config: FoodTempFormConfig | null) => void
+): Unsubscribe {
+  return subscribeKey<FoodTempFormConfig>(`foodTempConfig:${monthKey}`, (cfg) => {
+    onData(cfg || null);
+  });
+}
+
+export async function saveLocalFoodTempFormConfig(
+  monthKey: string,
+  input: Omit<FoodTempFormConfig, 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>,
+  defaultColLabels: FoodTempColumnLabels
+): Promise<void> {
+  await ensureLocalArchive(monthKey);
+  const l = input.colLabels || defaultColLabels;
+  const payload: FoodTempFormConfig = {
+    uid: LOCAL_WORKSPACE_UID,
+    monthKey,
+    logoLeftDataUrl: (input.logoLeftDataUrl || '').slice(0, 200000),
+    logoLeftWidthPx: input.logoLeftWidthPx || 56,
+    logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    logoRightWidthPx: input.logoRightWidthPx || 56,
+    followGlobalLeftLogo: input.followGlobalLeftLogo !== false,
+    followGlobalRightLogo: input.followGlobalRightLogo !== false,
+    headerLine1: clampString(input.headerLine1, 120),
+    headerLine2: clampString(input.headerLine2, 150),
+    headerLine3: clampString(input.headerLine3, 150),
+    headerLine4: clampString(input.headerLine4, 250),
+    titleMasak: clampString(input.titleMasak, 120),
+    titleOmpreng: clampString(input.titleOmpreng, 120),
+    bulanLabel: clampString(input.bulanLabel, 60),
+    colLabels: {
+      tanggal: clampString(l.tanggal || 'Tanggal', 40),
+      namaMakanan: clampString(l.namaMakanan || 'Nama Makanan', 60),
+      suhuMakanan: clampString(l.suhuMakanan || 'Suhu Makanan (°C)', 60),
+      paraf: clampString(l.paraf || 'Paraf', 40),
+    },
+    signerLine1: clampString(input.signerLine1, 100),
+    signerLine2: clampString(input.signerLine2, 150),
+    signerName: clampString(input.signerName, 150),
+  };
+  await writeKey(`foodTempConfig:${monthKey}`, payload);
+}
+
+export function subscribeLocalFoodTempDayBlocks(
+  monthKey: string,
+  onData: (blocks: FoodTempDayBlock[]) => void
+): Unsubscribe {
+  return subscribeKey<Record<string, FoodTempDayBlock>>(
+    `foodTempBlocks:${monthKey}`,
+    (map) => {
+      const list = Object.values(map || {});
+      list.sort(
+        (a, b) =>
+          a.sheetType.localeCompare(b.sheetType) || a.blockOrder - b.blockOrder
+      );
+      onData(list);
+    }
+  );
+}
+
+export async function fetchLocalFoodTempDayBlocksOnce(
+  monthKey: string
+): Promise<FoodTempDayBlock[]> {
+  const map =
+    (await readKey<Record<string, FoodTempDayBlock>>(`foodTempBlocks:${monthKey}`)) || {};
+  const list = Object.values(map);
+  list.sort(
+    (a, b) => a.sheetType.localeCompare(b.sheetType) || a.blockOrder - b.blockOrder
+  );
+  return list;
+}
+
+export async function upsertLocalFoodTempDayBlock(
+  monthKey: string,
+  input: Omit<FoodTempDayBlock, 'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'> & {
+    id?: string;
+  }
+): Promise<string> {
+  await ensureLocalArchive(monthKey);
+  const blockId =
+    input.id ||
+    `ftb_${input.sheetType}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const map = {
+    ...((await readKey<Record<string, FoodTempDayBlock>>(`foodTempBlocks:${monthKey}`)) || {}),
+  };
+  map[blockId] = {
+    id: blockId,
+    uid: LOCAL_WORKSPACE_UID,
+    monthKey,
+    sheetType: input.sheetType,
+    blockOrder: Math.max(1, Math.min(200, Math.round(input.blockOrder))),
+    tanggal: clampString(input.tanggal, 60),
+    paraf: clampString(input.paraf, 60),
+    items: sanitizeFoodItems(input.items),
+  };
+  await writeKey(`foodTempBlocks:${monthKey}`, map);
+  return blockId;
+}
+
+export async function deleteLocalFoodTempDayBlock(
+  monthKey: string,
+  blockId: string
+): Promise<void> {
+  const map = {
+    ...((await readKey<Record<string, FoodTempDayBlock>>(`foodTempBlocks:${monthKey}`)) || {}),
+  };
+  delete map[blockId];
+  await writeKey(`foodTempBlocks:${monthKey}`, map);
+}
+
+export async function seedDefaultLocalFoodTempBlocks(
+  monthKey: string,
+  sheetType: FoodTempSheetType,
+  count = 5
+): Promise<void> {
+  await ensureLocalArchive(monthKey);
+  const map = {
+    ...((await readKey<Record<string, FoodTempDayBlock>>(`foodTempBlocks:${monthKey}`)) || {}),
+  };
+  const existingForSheet = Object.values(map).filter((b) => b.sheetType === sheetType);
+  if (existingForSheet.length > 0) return;
+
+  for (let i = 1; i <= count; i++) {
+    const blockId = `ftb_${sheetType}_init_${i}`;
+    map[blockId] = {
+      id: blockId,
+      uid: LOCAL_WORKSPACE_UID,
+      monthKey,
+      sheetType,
+      blockOrder: i,
+      tanggal: '',
+      paraf: '',
+      items: Array.from({ length: 5 }, () => ({ namaMakanan: '', suhu: '' })),
+    };
+  }
+  await writeKey(`foodTempBlocks:${monthKey}`, map);
+}
+
 // Keep unused-import-free reference to INDONESIAN_MONTHS if needed by future helpers
 void INDONESIAN_MONTHS;
+
+// --- TKPI 2020 & Spreadsheet Sync ---
+
+export function subscribeLocalTkpiSyncConfig(
+  onData: (config: TkpiSyncConfig | null) => void
+): Unsubscribe {
+  return subscribeKey<TkpiSyncConfig>('tkpiConfig', (cfg) => {
+    onData(cfg || null);
+  });
+}
+
+export async function saveLocalTkpiSyncConfig(
+  input: Omit<TkpiSyncConfig, 'uid' | 'updatedAt'>
+): Promise<void> {
+  const payload: TkpiSyncConfig = {
+    uid: LOCAL_WORKSPACE_UID,
+    spreadsheetUrl: clampString(input.spreadsheetUrl || '', 500),
+    lastSyncedAt: clampString(input.lastSyncedAt || '', 60),
+    syncedItems: Array.isArray(input.syncedItems) ? input.syncedItems.slice(0, 3000) : [],
+    customItems: Array.isArray(input.customItems) ? input.customItems.slice(0, 500) : [],
+  };
+  await writeKey('tkpiConfig', payload);
+}
+
+// --- Update PM (Penerima Manfaat) ---
+
+export function subscribeLocalMonthPmRecords(
+  monthKey: string,
+  onData: (records: DailyPmRecord[]) => void
+): Unsubscribe {
+  return subscribeKey<Record<string, DailyPmRecord>>(`pmDays:${monthKey}`, (map) => {
+    const list = Object.values(map || {});
+    list.sort((a, b) => a.dateIso.localeCompare(b.dateIso));
+    onData(list);
+  });
+}
+
+export async function upsertLocalDailyPmRecord(
+  monthKey: string,
+  input: Omit<DailyPmRecord, 'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
+): Promise<void> {
+  await ensureLocalArchive(monthKey);
+  const recordId = input.dateIso;
+  const map = {
+    ...((await readKey<Record<string, DailyPmRecord>>(`pmDays:${monthKey}`)) || {}),
+  };
+  map[recordId] = {
+    id: recordId,
+    uid: LOCAL_WORKSPACE_UID,
+    monthKey,
+    dateIso: input.dateIso,
+    hariKe: Math.max(1, Math.min(366, Math.round(input.hariKe || 1))),
+    headerLine1: clampString(input.headerLine1 || 'BADAN GIZI NASIONAL', 120),
+    headerLine2: clampString(input.headerLine2 || 'SATUAN PELAYANAN PEMENUHAN GIZI', 150),
+    headerLine3: clampString(input.headerLine3 || '', 150),
+    headerAlamat: clampString(input.headerAlamat || '', 250),
+    titleSpecific: clampString(input.titleSpecific || 'UPDATE DATA SPESIFIK', 120),
+    titleSummary: clampString(input.titleSummary || 'UPDATE DATA PENERIMA MANFAAT', 120),
+    logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    logoWidthPx: input.logoWidthPx || 56,
+    logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    logoRightWidthPx: input.logoRightWidthPx || 56,
+    followGlobalLeftLogo: input.followGlobalLeftLogo !== false,
+    followGlobalRightLogo: input.followGlobalRightLogo !== false,
+    specificRows: (input.specificRows || []).slice(0, 200),
+    summaryOverrides: input.summaryOverrides || {},
+  };
+  await writeKey(`pmDays:${monthKey}`, map);
+}
+
+export async function deleteLocalDailyPmRecord(
+  monthKey: string,
+  dateIso: string
+): Promise<void> {
+  const map = {
+    ...((await readKey<Record<string, DailyPmRecord>>(`pmDays:${monthKey}`)) || {}),
+  };
+  delete map[dateIso];
+  await writeKey(`pmDays:${monthKey}`, map);
+}
+
+// --- Nilai Gizi & Food Cost ---
+
+export function subscribeLocalMonthFoodCostPlans(
+  monthKey: string,
+  onData: (plans: FoodCostDayPlan[]) => void
+): Unsubscribe {
+  return subscribeKey<Record<string, FoodCostDayPlan>>(`foodCostDays:${monthKey}`, (map) => {
+    const list = Object.values(map || {});
+    list.sort((a, b) => a.dateIso.localeCompare(b.dateIso));
+    onData(list);
+  });
+}
+
+export async function upsertLocalFoodCostDayPlan(
+  monthKey: string,
+  input: Omit<FoodCostDayPlan, 'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'>
+): Promise<void> {
+  await ensureLocalArchive(monthKey);
+  const planId = input.dateIso;
+  const map = {
+    ...((await readKey<Record<string, FoodCostDayPlan>>(`foodCostDays:${monthKey}`)) || {}),
+  };
+  map[planId] = {
+    id: planId,
+    uid: LOCAL_WORKSPACE_UID,
+    monthKey,
+    dateIso: input.dateIso,
+    hariKe: Math.max(1, Math.min(366, Math.round(input.hariKe || 1))),
+    headerLine1: clampString(input.headerLine1 || 'BADAN GIZI NASIONAL', 120),
+    headerLine2: clampString(input.headerLine2 || 'SATUAN PELAYANAN PEMENUHAN GIZI', 150),
+    headerLine3: clampString(input.headerLine3 || '', 150),
+    headerAlamat: clampString(input.headerAlamat || '', 250),
+    logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    logoWidthPx: input.logoWidthPx || 56,
+    logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    logoRightWidthPx: input.logoRightWidthPx || 56,
+    followGlobalLeftLogo: input.followGlobalLeftLogo !== false,
+    followGlobalRightLogo: input.followGlobalRightLogo !== false,
+    worksheets: (input.worksheets || []).slice(0, 30),
+  };
+  await writeKey(`foodCostDays:${monthKey}`, map);
+}
+
+export async function deleteLocalFoodCostDayPlan(
+  monthKey: string,
+  dateIso: string
+): Promise<void> {
+  const map = {
+    ...((await readKey<Record<string, FoodCostDayPlan>>(`foodCostDays:${monthKey}`)) || {}),
+  };
+  delete map[dateIso];
+  await writeKey(`foodCostDays:${monthKey}`, map);
+}
+
+// --- Rekap Bahan Baku & Nota Pesanan (PO) ---
+
+export function subscribeLocalMonthPoRecaps(
+  monthKey: string,
+  onData: (recaps: RawMaterialRecapDayConfig[]) => void
+): Unsubscribe {
+  return subscribeKey<Record<string, RawMaterialRecapDayConfig>>(`poDays:${monthKey}`, (map) => {
+    const list = Object.values(map || {});
+    list.sort((a, b) => a.dateIso.localeCompare(b.dateIso));
+    onData(list);
+  });
+}
+
+export async function upsertLocalRawMaterialRecapDayConfig(
+  monthKey: string,
+  input: Omit<
+    RawMaterialRecapDayConfig,
+    'id' | 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'
+  >
+): Promise<void> {
+  await ensureLocalArchive(monthKey);
+  const recapId = input.dateIso;
+  const map = {
+    ...((await readKey<Record<string, RawMaterialRecapDayConfig>>(`poDays:${monthKey}`)) || {}),
+  };
+  map[recapId] = {
+    id: recapId,
+    uid: LOCAL_WORKSPACE_UID,
+    monthKey,
+    dateIso: input.dateIso,
+    hariKe: Math.max(1, Math.min(366, Math.round(input.hariKe || 1))),
+    headerLine1: clampString(input.headerLine1 || 'BADAN GIZI NASIONAL', 120),
+    headerLine2: clampString(input.headerLine2 || 'SATUAN PELAYANAN PEMENUHAN GIZI', 150),
+    headerLine3: clampString(input.headerLine3 || '', 150),
+    headerAlamat: clampString(input.headerAlamat || '', 250),
+    logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    logoWidthPx: input.logoWidthPx || 56,
+    logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    logoRightWidthPx: input.logoRightWidthPx || 56,
+    followGlobalLeftLogo: input.followGlobalLeftLogo !== false,
+    followGlobalRightLogo: input.followGlobalRightLogo !== false,
+    recapTitle: clampString(
+      input.recapTitle || 'REKAPAN TOTAL KEBUTUHAN BAHAN BAKU KESELURUHAN',
+      150
+    ),
+    sideLabel: clampString(input.sideLabel || 'REKAPAN / PO', 60),
+    bufferPercent: Math.max(0, Number(input.bufferPercent) || 0),
+    bumbuPercent: Math.max(0, Number(input.bumbuPercent) || 0),
+    rabPorsiKecilRate: Math.max(0, Number(input.rabPorsiKecilRate) || 0),
+    rabPorsiBesarRate: Math.max(0, Number(input.rabPorsiBesarRate) || 0),
+    poJudul: clampString(input.poJudul || `NOTA PESANAN HARI ${input.hariKe || 1}`, 120),
+    poDari: clampString(input.poDari || '', 150),
+    poKepada: clampString(input.poKepada || '', 150),
+    poAlamat: clampString(input.poAlamat || '', 250),
+    poSignerLabel1: clampString(input.poSignerLabel1 || 'Mengetahui,', 100),
+    poSignerLabel2: clampString(
+      input.poSignerLabel2 || 'Kepala Satuan Pelayanan Pemenuhan Gizi',
+      150
+    ),
+    poSignerName: clampString(input.poSignerName || '', 150),
+    itemOverrides: input.itemOverrides || {},
+  };
+  await writeKey(`poDays:${monthKey}`, map);
+}
+
+// --- Master Menu (1-4 Minggu / Bulanan) ---
+
+export function subscribeLocalMonthMasterMenus(
+  monthKey: string,
+  onData: (plans: MasterMenuPlan[]) => void
+): Unsubscribe {
+  return subscribeKey<Record<string, MasterMenuPlan>>(`masterMenus:${monthKey}`, (map) => {
+    const list = Object.values(map || {});
+    list.sort((a, b) => a.title.localeCompare(b.title));
+    onData(list);
+  });
+}
+
+export async function upsertLocalMasterMenuPlan(
+  monthKey: string,
+  input: Omit<MasterMenuPlan, 'uid' | 'monthKey' | 'createdAt' | 'updatedAt'> & { id?: string }
+): Promise<string> {
+  await ensureLocalArchive(monthKey);
+  const planId =
+    input.id || `mm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const map = {
+    ...((await readKey<Record<string, MasterMenuPlan>>(`masterMenus:${monthKey}`)) || {}),
+  };
+  const cycleMode = input.cycleMode || '4_minggu';
+  const categoryIds =
+    input.categoryIds && input.categoryIds.length > 0 ? input.categoryIds : ['sd_1_3'];
+
+  map[planId] = {
+    id: planId,
+    uid: LOCAL_WORKSPACE_UID,
+    monthKey,
+    title: clampString(
+      input.title || formatMasterMenuDefaultTitle(categoryIds, cycleMode, monthKey),
+      160
+    ),
+    categoryIds,
+    cycleMode,
+    headerLine1: clampString(input.headerLine1 || 'BADAN GIZI NASIONAL', 120),
+    headerLine2: clampString(input.headerLine2 || 'SATUAN PELAYANAN PEMENUHAN GIZI', 150),
+    headerLine3: clampString(input.headerLine3 || '', 150),
+    headerAlamat: clampString(input.headerAlamat || '', 250),
+    logoDataUrl: (input.logoDataUrl || '').slice(0, 200000),
+    logoWidthPx: input.logoWidthPx || 56,
+    logoRightDataUrl: (input.logoRightDataUrl || '').slice(0, 200000),
+    logoRightWidthPx: input.logoRightWidthPx || 56,
+    followGlobalLeftLogo: input.followGlobalLeftLogo !== false,
+    followGlobalRightLogo: input.followGlobalRightLogo !== false,
+    rowLabels: {
+      ...DEFAULT_MASTER_MENU_ROW_LABELS,
+      ...(input.rowLabels || {}),
+    },
+    weeks:
+      input.weeks && input.weeks.length > 0
+        ? input.weeks.slice(0, 6)
+        : generateMasterMenuWeeks(monthKey, cycleMode),
+  };
+  await writeKey(`masterMenus:${monthKey}`, map);
+  return planId;
+}
+
+export async function deleteLocalMasterMenuPlan(
+  monthKey: string,
+  planId: string
+): Promise<void> {
+  const map = {
+    ...((await readKey<Record<string, MasterMenuPlan>>(`masterMenus:${monthKey}`)) || {}),
+  };
+  delete map[planId];
+  await writeKey(`masterMenus:${monthKey}`, map);
+}
+
+
+

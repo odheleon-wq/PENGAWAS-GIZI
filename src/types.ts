@@ -31,6 +31,30 @@ export interface AkgTargetsConfig {
   customTitle?: string;
 }
 
+export type LogoDocumentKey =
+  | 'master_menu'
+  | 'update_pm'
+  | 'rekap_bahan'
+  | 'po_bahan'
+  | 'foodcost'
+  | 'rekapan'
+  | 'gizi'
+  | 'sampel'
+  | 'suhu'
+  | 'freezer'
+  | 'makanan';
+
+export interface SppgLogoSettings {
+  leftLogoDataUrl: string;
+  leftLogoWidthPx: number;
+  autoLinkLeftLogo: boolean;
+  rightLogoDataUrl: string;
+  rightLogoWidthPx: number;
+  autoLinkRightLogo: boolean;
+  applyLeftToDocs: Partial<Record<LogoDocumentKey, boolean>>;
+  applyRightToDocs: Partial<Record<LogoDocumentKey, boolean>>;
+}
+
 export interface SppgUserProfile {
   uid: string;
   email: string;
@@ -42,6 +66,7 @@ export interface SppgUserProfile {
   provinsi: string;
   namaSppi: string;
   nomorHp: string;
+  logoSettings?: SppgLogoSettings;
   createdAt?: unknown;
   updatedAt?: unknown;
 }
@@ -91,6 +116,11 @@ export interface SampleFormConfig {
   uid: string;
   monthKey: string;
   logoDataUrl?: string;
+  logoWidthPx?: number;
+  logoRightDataUrl?: string;
+  logoRightWidthPx?: number;
+  followGlobalLeftLogo?: boolean;
+  followGlobalRightLogo?: boolean;
   logoCaption: string;
   unitName: string;
   formLabel: string;
@@ -140,6 +170,11 @@ export interface TempFormConfig {
   uid: string;
   monthKey: string;
   logoDataUrl?: string;
+  logoWidthPx?: number;
+  logoRightDataUrl?: string;
+  logoRightWidthPx?: number;
+  followGlobalLeftLogo?: boolean;
+  followGlobalRightLogo?: boolean;
   logoCaption: string;
   unitName: string;
   formLabel: string;
@@ -220,6 +255,11 @@ export interface FreezerFormConfig {
   uid: string;
   monthKey: string;
   logoDataUrl?: string;
+  logoWidthPx?: number;
+  logoRightDataUrl?: string;
+  logoRightWidthPx?: number;
+  followGlobalLeftLogo?: boolean;
+  followGlobalRightLogo?: boolean;
   logoCaption: string;
   unitName: string;
   formLabel: string;
@@ -274,14 +314,323 @@ export interface FreezerLogRow {
   updatedAt?: unknown;
 }
 
+export type FoodTempSheetType = 'masak' | 'ompreng';
+
+export interface FoodTempColumnLabels {
+  tanggal: string;
+  namaMakanan: string;
+  suhuMakanan: string;
+  paraf: string;
+}
+
+export interface FoodTempFormConfig {
+  uid: string;
+  monthKey: string;
+  logoLeftDataUrl?: string;
+  logoLeftWidthPx?: number;
+  logoRightDataUrl?: string;
+  logoRightWidthPx?: number;
+  followGlobalLeftLogo?: boolean;
+  followGlobalRightLogo?: boolean;
+  headerLine1: string;
+  headerLine2: string;
+  headerLine3: string;
+  headerLine4: string;
+  titleMasak: string;
+  titleOmpreng: string;
+  bulanLabel: string;
+  colLabels?: FoodTempColumnLabels;
+  signerLine1: string;
+  signerLine2: string;
+  signerName: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface FoodTempItemRow {
+  namaMakanan: string;
+  suhu: string;
+}
+
+export interface FoodTempDayBlock {
+  id: string;
+  uid: string;
+  monthKey: string;
+  sheetType: FoodTempSheetType;
+  blockOrder: number;
+  tanggal: string;
+  paraf: string;
+  items: FoodTempItemRow[];
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
 export type PdfOrientation = 'landscape' | 'portrait';
 
 export type WorkspaceTab =
+  | 'dashboard'
+  | 'master_menu'
+  | 'update_pm'
+  | 'rekap_bahan'
+  | 'po_bahan'
   | 'rekapan'
   | 'gizi'
+  | 'foodcost'
   | 'sampel'
   | 'suhu'
   | 'freezer'
+  | 'makanan'
   | 'kalender'
   | 'arsip'
   | 'identitas';
+
+// --- TKPI 2020 & Spreadsheet Sync ---
+
+export interface TkpiFoodItem {
+  id: string;
+  no: string;
+  namaBahan: string;
+  sumber: string;
+  beratStandar: number;
+  bdd: number;
+  energi: number;
+  protein: number;
+  lemak: number;
+  kh: number;
+  serat: number;
+  defaultHargaSatuan?: number;
+  defaultSatuan?: string;
+  sourceType: 'tkpi' | 'spreadsheet' | 'manual';
+}
+
+export interface TkpiSyncConfig {
+  uid: string;
+  spreadsheetUrl: string;
+  lastSyncedAt: string;
+  syncedItems: TkpiFoodItem[];
+  customItems: TkpiFoodItem[];
+  updatedAt?: unknown;
+}
+
+// --- Update PM (Data Spesifik & Data Penerima Manfaat) ---
+
+export type PmCategoryOrSampleId = TargetCategoryId | 'sampel';
+
+export interface PmCategoryCounts {
+  tanpaAlergiBesar: number;
+  tanpaAlergiKecil: number;
+  dietAlergiBesar: number;
+  dietAlergiKecil: number;
+}
+
+export interface PmSpecificRow {
+  id: string;
+  rowOrder: number;
+  namaSekolah: string;
+  porsiBesarCategoryId: TargetCategoryId;
+  porsiKecilCategoryId: TargetCategoryId;
+  tanpaAlergiBesar: number;
+  tanpaAlergiKecil: number;
+  dietAlergiBesar: number;
+  dietAlergiKecil: number;
+}
+
+export interface DailyPmRecord {
+  id: string; // dateIso (YYYY-MM-DD)
+  uid: string;
+  monthKey: string;
+  dateIso: string;
+  hariKe: number;
+  headerLine1: string;
+  headerLine2: string;
+  headerLine3: string;
+  headerAlamat: string;
+  titleSpecific: string;
+  titleSummary: string;
+  logoDataUrl?: string;
+  logoWidthPx?: number;
+  logoRightDataUrl?: string;
+  logoRightWidthPx?: number;
+  followGlobalLeftLogo?: boolean;
+  followGlobalRightLogo?: boolean;
+  specificRows: PmSpecificRow[];
+  summaryOverrides: Partial<Record<PmCategoryOrSampleId, Partial<PmCategoryCounts>>>;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+// --- Nilai Gizi & Food Cost ---
+
+export type FoodCostPurchaseUnit = 'kg' | 'potong' | 'ekor' | 'lembar' | 'rak';
+export type FoodCostPortionScope = 'auto' | 'kecil' | 'besar' | 'semua';
+
+export interface FoodCostIngredientRow {
+  id: string;
+  menuName: string;
+  tkpiId?: string;
+  bahanMakanan: string;
+  beratBb: number;
+  urt: string;
+  energiPer100: number;
+  proteinPer100: number;
+  lemakPer100: number;
+  khPer100: number;
+  seratPer100: number;
+  bddPercent: number;
+  jumlahManfaatOverride?: number | null;
+  purchaseUnit: FoodCostPurchaseUnit;
+  /** Gram per 1 satuan (misal 250g/lembar tempe, 1850g/rak telur). Kosong jika pakai Kg atau input manual jumlah unit. */
+  gramPerUnit?: number | null;
+  manualPotong?: number | null;
+  manualEkor?: number | null;
+  manualLembar?: number | null;
+  manualRak?: number | null;
+  hargaSatuan: number;
+}
+
+export interface FoodCostWorksheet {
+  id: string;
+  title: string;
+  sideLabel: string;
+  categoryIds: TargetCategoryId[];
+  portionScope: FoodCostPortionScope;
+  isAllergySheet: boolean;
+  bumbuPercent: number;
+  akgOverride?: {
+    energi: number;
+    protein: number;
+    lemak: number;
+    karbohidrat: number;
+    serat: number;
+  };
+  rows: FoodCostIngredientRow[];
+}
+
+export interface FoodCostDayPlan {
+  id: string; // dateIso (YYYY-MM-DD)
+  uid: string;
+  monthKey: string;
+  dateIso: string;
+  hariKe: number;
+  headerLine1: string;
+  headerLine2: string;
+  headerLine3: string;
+  headerAlamat: string;
+  logoDataUrl?: string;
+  logoWidthPx?: number;
+  logoRightDataUrl?: string;
+  logoRightWidthPx?: number;
+  followGlobalLeftLogo?: boolean;
+  followGlobalRightLogo?: boolean;
+  worksheets: FoodCostWorksheet[];
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+// --- Rekap Bahan Baku & Nota Pesanan (PO) ---
+
+export interface RawMaterialOverrideItem {
+  bufferPercent?: number | null;
+  satuanPo?: string;
+  hargaSatuan?: number | null;
+  totalPoManual?: number | null;
+  estimasiBufferManual?: number | null;
+}
+
+export interface RawMaterialRecapDayConfig {
+  id: string; // dateIso (YYYY-MM-DD)
+  uid: string;
+  monthKey: string;
+  dateIso: string;
+  hariKe: number;
+  headerLine1: string;
+  headerLine2: string;
+  headerLine3: string;
+  headerAlamat: string;
+  logoDataUrl?: string;
+  logoWidthPx?: number;
+  logoRightDataUrl?: string;
+  logoRightWidthPx?: number;
+  followGlobalLeftLogo?: boolean;
+  followGlobalRightLogo?: boolean;
+  recapTitle: string;
+  sideLabel: string;
+  bufferPercent: number;
+  bumbuPercent: number;
+  rabPorsiKecilRate: number;
+  rabPorsiBesarRate: number;
+  poJudul: string;
+  poDari: string;
+  poKepada: string;
+  poAlamat: string;
+  poSignerLabel1: string;
+  poSignerLabel2: string;
+  poSignerName: string;
+  itemOverrides: Record<string, RawMaterialOverrideItem>;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+// --- Master Menu (1-4 Minggu / Bulanan) ---
+
+export type MasterMenuCycleMode =
+  | '1_minggu'
+  | '2_minggu'
+  | '3_minggu'
+  | '4_minggu'
+  | 'bulanan';
+
+export interface MasterMenuRowLabels {
+  kelompokHeader: string;
+  makananPokok: string;
+  laukHewani: string;
+  laukNabati: string;
+  sayuran: string;
+  buah: string;
+  susu: string;
+}
+
+export interface MasterMenuDayCell {
+  id: string;
+  dateIso: string;
+  dayLabel: string;
+  menuNumber: number;
+  makananPokok: string;
+  laukHewani: string;
+  laukNabati: string;
+  sayuran: string;
+  buah: string;
+  susu: string;
+}
+
+export interface MasterMenuWeekBlock {
+  id: string;
+  weekNumber: number;
+  weekLabel: string;
+  days: MasterMenuDayCell[];
+}
+
+export interface MasterMenuPlan {
+  id: string;
+  uid: string;
+  monthKey: string;
+  title: string;
+  categoryIds: TargetCategoryId[];
+  cycleMode: MasterMenuCycleMode;
+  headerLine1: string;
+  headerLine2: string;
+  headerLine3: string;
+  headerAlamat: string;
+  logoDataUrl?: string;
+  logoWidthPx?: number;
+  logoRightDataUrl?: string;
+  logoRightWidthPx?: number;
+  followGlobalLeftLogo?: boolean;
+  followGlobalRightLogo?: boolean;
+  rowLabels: MasterMenuRowLabels;
+  weeks: MasterMenuWeekBlock[];
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+
