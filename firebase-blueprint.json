@@ -1262,6 +1262,53 @@
         "headerLine1", "headerLine2", "headerLine3", "headerAlamat",
         "rowLabels", "weeks", "createdAt", "updatedAt"
       ]
+    },
+    "UserAccessRecord": {
+      "title": "UserAccessRecord",
+      "description": "Catatan login email pribadi pengguna, status daftar tunggu/ACC Admin Odhe Gizi, serta tanggal mulai dan tanggal berakhir login.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 200 },
+        "displayName": { "type": "string", "maxLength": 150 },
+        "photoUrl": { "type": "string", "maxLength": 500 },
+        "status": { "type": "string", "enum": ["waiting", "approved", "blocked"] },
+        "role": { "type": "string", "enum": ["admin", "user"] },
+        "waitingNote": { "type": "string", "maxLength": 300 },
+        "firstLoginAt": { "type": "string", "maxLength": 60 },
+        "lastLoginAt": { "type": "string", "maxLength": 60 },
+        "loginCount": { "type": "integer" },
+        "accessStartDate": { "type": "string", "maxLength": 30 },
+        "accessExpiresAt": { "type": "string", "maxLength": 30 },
+        "approvedBy": { "type": "string", "maxLength": 200 },
+        "approvedAt": { "type": "string", "maxLength": 60 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid", "email", "displayName", "photoUrl", "status", "role",
+        "waitingNote", "firstLoginAt", "lastLoginAt", "loginCount",
+        "accessStartDate", "accessExpiresAt", "approvedBy", "approvedAt",
+        "createdAt", "updatedAt"
+      ]
+    },
+    "AdminSpreadsheetConfig": {
+      "title": "AdminSpreadsheetConfig",
+      "description": "Konfigurasi link Google Spreadsheet dan Apps Script Webhook database pengguna Admin Odhe Gizi.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "spreadsheetUrl": { "type": "string", "maxLength": 500 },
+        "appsScriptWebhookUrl": { "type": "string", "maxLength": 500 },
+        "autoPushEnabled": { "type": "boolean" },
+        "lastSyncedAt": { "type": "string", "maxLength": 60 },
+        "lastPushedCount": { "type": "integer" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id", "spreadsheetUrl", "appsScriptWebhookUrl",
+        "autoPushEnabled", "lastSyncedAt", "lastPushedCount", "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -1372,6 +1419,18 @@
         "$ref": "#/entities/MasterMenuPlan"
       },
       "description": "Dokumen Master Menu siklus 1-4 minggu atau bulanan per kelompok sasaran."
+    },
+    "/userAccess/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserAccessRecord"
+      },
+      "description": "Kontrol akses pengguna berbasis email pribadi, daftar tunggu, tanggal login, dan tanggal berakhir yang diatur oleh Admin Odhe Gizi."
+    },
+    "/adminSettings/{settingId}": {
+      "schema": {
+        "$ref": "#/entities/AdminSpreadsheetConfig"
+      },
+      "description": "Konfigurasi sinkronisasi spreadsheet database pengguna khusus Admin Odhe Gizi."
     }
   }
 }

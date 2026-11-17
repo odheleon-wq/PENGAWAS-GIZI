@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Camera,
   Check,
@@ -22,6 +22,8 @@ import type {
   TempTableLabels,
 } from '../types';
 import { resolveDocumentLogos } from '../utils/logoResolver';
+import { useAutoSave, type AutoSaveStatus } from '../hooks/useAutoSave';
+import { AutoSaveIndicator } from './AutoSaveIndicator';
 import { LogoUploadModal } from './LogoUploadModal';
 import { TempPhotoDetectModal } from './TempPhotoDetectModal';
 
@@ -100,8 +102,14 @@ export const TemperatureMonitoringView: React.FC<TemperatureMonitoringViewProps>
   const [draftRoom, setDraftRoom] = useState<TempMonitoringRoom | null>(null);
   const [savingRoom, setSavingRoom] = useState(false);
 
-  // Local map of day 1..31 for smooth inline editing
+  // Local map of day 1..31 for smooth inline editing + auto-save
   const [localDays, setLocalDays] = useState<Record<number, TempDayReading>>({});
+  const dirtyDaysRef = useRef<Set<number>>(new Set());
+  const dayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [dayAutoStatus, setDayAutoStatus] = useState<AutoSaveStatus>('idle');
+  const [dayLastSavedAt, setDayLastSavedAt] = useState<string>('');
+  const [dayErrorMsg, setDayErrorMsg] = useState<string | null>(null);
+
   const [photoModalState, setPhotoModalState] = useState<{
     open: boolean;
     day: number;
@@ -123,24 +131,188 @@ export const TemperatureMonitoringView: React.FC<TemperatureMonitoringViewProps>
     }
   }, [roomsLoaded, rooms.length, monthKey, onCreateRoom]);
 
-  useEffect(() => {
-    setDraftConfig({
+  const serializeTempCfg = useCallback(
+    (c: TempFormConfig) =>
+      JSON.stringify({
+        logoDataUrl: c.logoDataUrl || '',
+        logoWidthPx: c.logoWidthPx || 56,
+        logoRightDataUrl: c.logoRightDataUrl || '',
+        logoRightWidthPx: c.logoRightWidthPx || 56,
+        followGlobalLeftLogo: c.followGlobalLeftLogo !== false,
+        followGlobalRightLogo: c.followGlobalRightLogo !== false,
+        logoCaption: c.logoCaption,
+        unitName: c.unitName,
+        formLabel: c.formLabel,
+        formTitle: c.formTitle,
+        docNumber: c.docNumber,
+        revision: c.revision,
+        effectiveDate: c.effectiveDate,
+        periodeLabel: c.periodeLabel,
+        tableLabels: { ...DEFAULT_TEMP_TABLE_LABELS, ...(c.tableLabels || {}) },
+        sopTitle: c.sopTitle,
+        sopSubtitle: c.sopSubtitle,
+      }),
+    []
+  );
+
+  const normalizedServerCfg = useMemo(
+    () => ({
       ...config,
       tableLabels: { ...DEFAULT_TEMP_TABLE_LABELS, ...(config.tableLabels || {}) },
-    });
-  }, [config]);
+    }),
+    [config]
+  );
+  const cfgServerHash = useMemo(
+    () => serializeTempCfg(normalizedServerCfg),
+    [normalizedServerCfg, serializeTempCfg]
+  );
+  const lastCfgServerHashRef = useRef<string>(cfgServerHash);
+  const lastCfgMonthRef = useRef<string>(monthKey);
+  const draftCfgRef = useRef<TempFormConfig>(draftConfig);
+  draftCfgRef.current = draftConfig;
+
+  useEffect(() => {
+    const monthChanged = lastCfgMonthRef.current !== monthKey;
+    const isClean = serializeTempCfg(draftCfgRef.current) === lastCfgServerHashRef.current;
+    if (monthChanged || isClean) {
+      setDraftConfig(normalizedServerCfg);
+    }
+    lastCfgMonthRef.current = monthKey;
+    lastCfgServerHashRef.current = cfgServerHash;
+  }, [monthKey, normalizedServerCfg, cfgServerHash, serializeTempCfg]);
+
+  const {
+    status: cfgAutoStatus,
+    lastSavedAtLabel: cfgLastSavedAt,
+    errorMessage: cfgErrorMsg,
+    markSynced: markCfgSynced,
+  } = useAutoSave<TempFormConfig>({
+    value: draftConfig,
+    serverHash: cfgServerHash,
+    scopeKey: `temp_cfg:${monthKey}`,
+    uid: profile.uid,
+    serialize: serializeTempCfg,
+    onSave: async (val) => {
+      const merged = { ...DEFAULT_TEMP_TABLE_LABELS, ...(val.tableLabels || {}) };
+      await onSaveConfig({
+        logoDataUrl: val.logoDataUrl || '',
+        logoWidthPx: val.logoWidthPx || 56,
+        logoRightDataUrl: val.logoRightDataUrl || '',
+        logoRightWidthPx: val.logoRightWidthPx || 56,
+        followGlobalLeftLogo: val.followGlobalLeftLogo !== false,
+        followGlobalRightLogo: val.followGlobalRightLogo !== false,
+        logoCaption: val.logoCaption,
+        unitName: val.unitName,
+        formLabel: val.formLabel,
+        formTitle: val.formTitle,
+        docNumber: val.docNumber,
+        revision: val.revision,
+        effectiveDate: val.effectiveDate,
+        periodeLabel: val.periodeLabel,
+        tableLabels: merged,
+        sopTitle: val.sopTitle,
+        sopSubtitle: val.sopSubtitle,
+      });
+    },
+  });
 
   useEffect(() => {
     setDraftRoom(activeRoom ? { ...activeRoom } : null);
   }, [activeRoom]);
 
+  const lastRoomIdRef = useRef<string | undefined>(activeRoom?.id);
   useEffect(() => {
-    const map: Record<number, TempDayReading> = {};
-    dayReadings.forEach((r) => {
-      map[r.day] = r;
+    if (lastRoomIdRef.current !== activeRoom?.id) {
+      dirtyDaysRef.current.clear();
+      if (dayTimerRef.current) {
+        clearTimeout(dayTimerRef.current);
+        dayTimerRef.current = null;
+      }
+      lastRoomIdRef.current = activeRoom?.id;
+    }
+    setLocalDays((prev) => {
+      const map: Record<number, TempDayReading> = {};
+      dayReadings.forEach((r) => {
+        if (dirtyDaysRef.current.has(r.day) && prev[r.day]) {
+          map[r.day] = prev[r.day];
+        } else {
+          map[r.day] = r;
+        }
+      });
+      dirtyDaysRef.current.forEach((dirtyDay) => {
+        if (!map[dirtyDay] && prev[dirtyDay]) {
+          map[dirtyDay] = prev[dirtyDay];
+        }
+      });
+      return map;
     });
-    setLocalDays(map);
   }, [dayReadings, activeRoom?.id]);
+
+  const localDaysRef = useRef(localDays);
+  localDaysRef.current = localDays;
+  const activeRoomRef = useRef(activeRoom);
+  activeRoomRef.current = activeRoom;
+
+  const flushDirtyDays = useCallback(async () => {
+    if (dayTimerRef.current) {
+      clearTimeout(dayTimerRef.current);
+      dayTimerRef.current = null;
+    }
+    const room = activeRoomRef.current;
+    const days = Array.from(dirtyDaysRef.current);
+    if (!room || days.length === 0) return;
+    setDayAutoStatus('saving');
+    setDayErrorMsg(null);
+    try {
+      for (const d of days) {
+        const curr = localDaysRef.current[d];
+        dirtyDaysRef.current.delete(d);
+        if (!curr) continue;
+        await onSaveDayReading(room.id, {
+          day: d,
+          jam: curr.jam,
+          suhu: curr.suhu,
+          rh: curr.rh,
+          paraf: curr.paraf,
+          namaPetugas: curr.namaPetugas,
+          photoDataUrl: curr.photoDataUrl || '',
+          detectedNote: curr.detectedNote || '',
+        });
+      }
+      const now = new Date();
+      setDayLastSavedAt(
+        `${String(now.getHours()).padStart(2, '0')}.${String(now.getMinutes()).padStart(2, '0')}.${String(now.getSeconds()).padStart(2, '0')}`
+      );
+      setDayAutoStatus('saved');
+    } catch (err) {
+      days.forEach((d) => dirtyDaysRef.current.add(d));
+      setDayAutoStatus('error');
+      setDayErrorMsg(err instanceof Error ? err.message : 'Gagal auto-simpan data suhu.');
+    }
+  }, [onSaveDayReading]);
+
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === 'hidden' && dirtyDaysRef.current.size > 0) {
+        void flushDirtyDays();
+      }
+    };
+    const onUnload = () => {
+      if (dirtyDaysRef.current.size > 0) {
+        void flushDirtyDays();
+      }
+    };
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', onUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', onUnload);
+      if (dayTimerRef.current) clearTimeout(dayTimerRef.current);
+      if (dirtyDaysRef.current.size > 0) {
+        void flushDirtyDays();
+      }
+    };
+  }, [flushDirtyDays]);
 
   const labels: TempTableLabels = {
     ...DEFAULT_TEMP_TABLE_LABELS,
@@ -250,6 +422,7 @@ export const TemperatureMonitoringView: React.FC<TemperatureMonitoringViewProps>
         });
       }
 
+      markCfgSynced(serializeTempCfg(draftConfig));
       setSavedNotice(true);
       setTimeout(() => setSavedNotice(false), 2500);
     } finally {
@@ -283,12 +456,19 @@ export const TemperatureMonitoringView: React.FC<TemperatureMonitoringViewProps>
         [day]: { ...curr, [field]: value },
       };
     });
+    dirtyDaysRef.current.add(day);
+    setDayAutoStatus('pending');
+    if (dayTimerRef.current) clearTimeout(dayTimerRef.current);
+    dayTimerRef.current = setTimeout(() => {
+      void flushDirtyDays();
+    }, 850);
   };
 
   const handleDayFieldBlur = async (day: number) => {
     if (!activeRoom) return;
     const curr = localDays[day];
     if (!curr) return;
+    dirtyDaysRef.current.delete(day);
     await onSaveDayReading(activeRoom.id, {
       day,
       jam: curr.jam,
@@ -299,6 +479,11 @@ export const TemperatureMonitoringView: React.FC<TemperatureMonitoringViewProps>
       photoDataUrl: curr.photoDataUrl || '',
       detectedNote: curr.detectedNote || '',
     });
+    const now = new Date();
+    setDayLastSavedAt(
+      `${String(now.getHours()).padStart(2, '0')}.${String(now.getMinutes()).padStart(2, '0')}.${String(now.getSeconds()).padStart(2, '0')}`
+    );
+    setDayAutoStatus('saved');
   };
 
   const combinedSopRows = useMemo(() => {
@@ -349,6 +534,17 @@ export const TemperatureMonitoringView: React.FC<TemperatureMonitoringViewProps>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <AutoSaveIndicator
+              status={
+                cfgAutoStatus === 'saving' || cfgAutoStatus === 'pending' || cfgAutoStatus === 'error'
+                  ? cfgAutoStatus
+                  : dayAutoStatus !== 'idle'
+                  ? dayAutoStatus
+                  : cfgAutoStatus
+              }
+              lastSavedAtLabel={dayLastSavedAt || cfgLastSavedAt}
+              errorMessage={dayErrorMsg || cfgErrorMsg}
+            />
             <button
               type="button"
               disabled={!activeRoom}

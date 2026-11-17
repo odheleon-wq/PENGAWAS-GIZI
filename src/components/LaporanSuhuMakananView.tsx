@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   Copy,
@@ -26,6 +26,8 @@ import type {
 import { formatIndonesianFullDate } from '../utils/dateUtils';
 import { resolveDocumentLogos } from '../utils/logoResolver';
 import { exportFoodTemperatureToF4Pdf } from '../utils/pdfExporter';
+import { useAutoSave, type AutoSaveStatus } from '../hooks/useAutoSave';
+import { AutoSaveIndicator } from './AutoSaveIndicator';
 import { LogoUploadModal } from './LogoUploadModal';
 
 interface LaporanSuhuMakananViewProps {
@@ -83,7 +85,25 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
   onSeedDefaultBlocks,
   onSyncGlobalLeftLogo,
 }) => {
-  const [viewMode, setViewMode] = useState<ViewMode>('both');
+  const viewModeStorageKey = `sppg_foodtemp_mode_v1:${profile.uid}`;
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    try {
+      const saved = window.localStorage.getItem(`sppg_foodtemp_mode_v1:${profile.uid}`);
+      if (saved === 'both' || saved === 'masak' || saved === 'ompreng') return saved;
+    } catch {
+      // Ignore storage error
+    }
+    return 'both';
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(viewModeStorageKey, viewMode);
+    } catch {
+      // Ignore storage error
+    }
+  }, [viewModeStorageKey, viewMode]);
+
   const [showFormatEditor, setShowFormatEditor] = useState(false);
   const [draftConfig, setDraftConfig] = useState<FoodTempFormConfig>(config);
   const [savingConfig, setSavingConfig] = useState(false);
@@ -91,6 +111,11 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
   const [logoModalSide, setLogoModalSide] = useState<'left' | 'right' | null>(null);
 
   const [localBlocks, setLocalBlocks] = useState<Record<string, FoodTempDayBlock>>({});
+  const dirtyBlockIdsRef = useRef<Set<string>>(new Set());
+  const blockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [blockAutoStatus, setBlockAutoStatus] = useState<AutoSaveStatus>('idle');
+  const [blockLastSavedAt, setBlockLastSavedAt] = useState<string>('');
+  const [blockErrorMsg, setBlockErrorMsg] = useState<string | null>(null);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
   const seededMonthsRef = useRef<Set<string>>(new Set());
@@ -113,26 +138,171 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
     }
   }, [blocksLoaded, blocks, monthKey, onSeedDefaultBlocks]);
 
-  useEffect(() => {
-    setDraftConfig({
+  const serializeFoodTempCfg = useCallback(
+    (c: FoodTempFormConfig) =>
+      JSON.stringify({
+        logoLeftDataUrl: c.logoLeftDataUrl || '',
+        logoLeftWidthPx: c.logoLeftWidthPx || 56,
+        logoRightDataUrl: c.logoRightDataUrl || '',
+        logoRightWidthPx: c.logoRightWidthPx || 56,
+        followGlobalLeftLogo: c.followGlobalLeftLogo !== false,
+        followGlobalRightLogo: c.followGlobalRightLogo !== false,
+        headerLine1: c.headerLine1,
+        headerLine2: c.headerLine2,
+        headerLine3: c.headerLine3,
+        headerLine4: c.headerLine4,
+        titleMasak: c.titleMasak,
+        titleOmpreng: c.titleOmpreng,
+        bulanLabel: c.bulanLabel,
+        colLabels: { ...DEFAULT_FOOD_TEMP_COL_LABELS, ...(c.colLabels || {}) },
+        signerLine1: c.signerLine1,
+        signerLine2: c.signerLine2,
+        signerName: c.signerName,
+      }),
+    []
+  );
+
+  const normalizedServerCfg = useMemo(
+    () => ({
       ...config,
       colLabels: { ...DEFAULT_FOOD_TEMP_COL_LABELS, ...(config.colLabels || {}) },
-    });
-  }, [config]);
+    }),
+    [config]
+  );
+  const cfgServerHash = useMemo(
+    () => serializeFoodTempCfg(normalizedServerCfg),
+    [normalizedServerCfg, serializeFoodTempCfg]
+  );
+  const lastCfgHashRef = useRef<string>(cfgServerHash);
+  const lastCfgMonthRef = useRef<string>(monthKey);
+  const draftCfgRef = useRef<FoodTempFormConfig>(draftConfig);
+  draftCfgRef.current = draftConfig;
 
   useEffect(() => {
-    const mapped: Record<string, FoodTempDayBlock> = {};
-    blocks.forEach((b) => {
-      mapped[b.id] = {
-        ...b,
-        items:
-          b.items && b.items.length > 0
-            ? b.items.map((it) => ({ ...it }))
-            : [{ namaMakanan: '', suhu: '' }],
-      };
+    const monthChanged = lastCfgMonthRef.current !== monthKey;
+    const isClean = serializeFoodTempCfg(draftCfgRef.current) === lastCfgHashRef.current;
+    if (monthChanged || isClean) {
+      setDraftConfig(normalizedServerCfg);
+    }
+    lastCfgMonthRef.current = monthKey;
+    lastCfgHashRef.current = cfgServerHash;
+  }, [monthKey, normalizedServerCfg, cfgServerHash, serializeFoodTempCfg]);
+
+  const {
+    status: cfgAutoStatus,
+    lastSavedAtLabel: cfgLastSavedAt,
+    errorMessage: cfgErrorMsg,
+    markSynced: markCfgSynced,
+  } = useAutoSave<FoodTempFormConfig>({
+    value: draftConfig,
+    serverHash: cfgServerHash,
+    scopeKey: `food_temp_cfg:${monthKey}`,
+    uid: profile.uid,
+    serialize: serializeFoodTempCfg,
+    onSave: async (val) => {
+      const merged = { ...DEFAULT_FOOD_TEMP_COL_LABELS, ...(val.colLabels || {}) };
+      await onSaveConfig({
+        logoLeftDataUrl: val.logoLeftDataUrl || '',
+        logoLeftWidthPx: val.logoLeftWidthPx || 56,
+        logoRightDataUrl: val.logoRightDataUrl || '',
+        logoRightWidthPx: val.logoRightWidthPx || 56,
+        followGlobalLeftLogo: val.followGlobalLeftLogo !== false,
+        followGlobalRightLogo: val.followGlobalRightLogo !== false,
+        headerLine1: val.headerLine1,
+        headerLine2: val.headerLine2,
+        headerLine3: val.headerLine3,
+        headerLine4: val.headerLine4,
+        titleMasak: val.titleMasak,
+        titleOmpreng: val.titleOmpreng,
+        bulanLabel: val.bulanLabel,
+        colLabels: merged,
+        signerLine1: val.signerLine1,
+        signerLine2: val.signerLine2,
+        signerName: val.signerName,
+      });
+    },
+  });
+
+  useEffect(() => {
+    setLocalBlocks((prev) => {
+      const mapped: Record<string, FoodTempDayBlock> = {};
+      blocks.forEach((b) => {
+        if (dirtyBlockIdsRef.current.has(b.id) && prev[b.id]) {
+          mapped[b.id] = prev[b.id];
+        } else {
+          mapped[b.id] = {
+            ...b,
+            items:
+              b.items && b.items.length > 0
+                ? b.items.map((it) => ({ ...it }))
+                : [{ namaMakanan: '', suhu: '' }],
+          };
+        }
+      });
+      return mapped;
     });
-    setLocalBlocks(mapped);
   }, [blocks]);
+
+  const localBlocksRef = useRef(localBlocks);
+  localBlocksRef.current = localBlocks;
+
+  const flushDirtyBlocks = useCallback(async () => {
+    if (blockTimerRef.current) {
+      clearTimeout(blockTimerRef.current);
+      blockTimerRef.current = null;
+    }
+    const ids = Array.from(dirtyBlockIdsRef.current);
+    if (ids.length === 0) return;
+    setBlockAutoStatus('saving');
+    setBlockErrorMsg(null);
+    try {
+      for (const id of ids) {
+        const block = localBlocksRef.current[id];
+        dirtyBlockIdsRef.current.delete(id);
+        if (!block) continue;
+        await onSaveBlock({
+          id: block.id,
+          sheetType: block.sheetType,
+          blockOrder: block.blockOrder,
+          tanggal: block.tanggal,
+          paraf: block.paraf,
+          items: block.items,
+        });
+      }
+      const now = new Date();
+      setBlockLastSavedAt(
+        `${String(now.getHours()).padStart(2, '0')}.${String(now.getMinutes()).padStart(2, '0')}.${String(now.getSeconds()).padStart(2, '0')}`
+      );
+      setBlockAutoStatus('saved');
+    } catch (err) {
+      ids.forEach((id) => dirtyBlockIdsRef.current.add(id));
+      setBlockAutoStatus('error');
+      setBlockErrorMsg(err instanceof Error ? err.message : 'Gagal auto-simpan suhu makanan.');
+    }
+  }, [onSaveBlock]);
+
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === 'hidden' && dirtyBlockIdsRef.current.size > 0) {
+        void flushDirtyBlocks();
+      }
+    };
+    const onUnload = () => {
+      if (dirtyBlockIdsRef.current.size > 0) {
+        void flushDirtyBlocks();
+      }
+    };
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', onUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', onUnload);
+      if (blockTimerRef.current) clearTimeout(blockTimerRef.current);
+      if (dirtyBlockIdsRef.current.size > 0) {
+        void flushDirtyBlocks();
+      }
+    };
+  }, [flushDirtyBlocks]);
 
   const labels: FoodTempColumnLabels = {
     ...DEFAULT_FOOD_TEMP_COL_LABELS,
@@ -216,6 +386,7 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
         signerLine2: draftConfig.signerLine2,
         signerName: draftConfig.signerName,
       });
+      markCfgSynced(serializeFoodTempCfg(draftConfig));
       setSavedNotice(true);
       setTimeout(() => setSavedNotice(false), 2500);
     } finally {
@@ -236,6 +407,12 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
         [blockId]: { ...target, [field]: value },
       };
     });
+    dirtyBlockIdsRef.current.add(blockId);
+    setBlockAutoStatus('pending');
+    if (blockTimerRef.current) clearTimeout(blockTimerRef.current);
+    blockTimerRef.current = setTimeout(() => {
+      void flushDirtyBlocks();
+    }, 850);
   };
 
   const handleItemFieldChange = (
@@ -255,9 +432,16 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
         [blockId]: { ...target, items: nextItems },
       };
     });
+    dirtyBlockIdsRef.current.add(blockId);
+    setBlockAutoStatus('pending');
+    if (blockTimerRef.current) clearTimeout(blockTimerRef.current);
+    blockTimerRef.current = setTimeout(() => {
+      void flushDirtyBlocks();
+    }, 850);
   };
 
   const handlePersistBlock = async (block: FoodTempDayBlock) => {
+    dirtyBlockIdsRef.current.delete(block.id);
     await onSaveBlock({
       id: block.id,
       sheetType: block.sheetType,
@@ -266,6 +450,11 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
       paraf: block.paraf,
       items: block.items,
     });
+    const now = new Date();
+    setBlockLastSavedAt(
+      `${String(now.getHours()).padStart(2, '0')}.${String(now.getMinutes()).padStart(2, '0')}.${String(now.getSeconds()).padStart(2, '0')}`
+    );
+    setBlockAutoStatus('saved');
   };
 
   const handleAddItemRowToBlock = async (blockId: string) => {
@@ -723,6 +912,17 @@ export const LaporanSuhuMakananView: React.FC<LaporanSuhuMakananViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <AutoSaveIndicator
+            status={
+              cfgAutoStatus === 'saving' || cfgAutoStatus === 'pending' || cfgAutoStatus === 'error'
+                ? cfgAutoStatus
+                : blockAutoStatus !== 'idle'
+                ? blockAutoStatus
+                : cfgAutoStatus
+            }
+            lastSavedAtLabel={blockLastSavedAt || cfgLastSavedAt}
+            errorMessage={blockErrorMsg || cfgErrorMsg}
+          />
           {/* Segmented View Switch */}
           <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1">
             <button

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   Edit3,
@@ -21,6 +21,8 @@ import type {
   SppgUserProfile,
 } from '../types';
 import { resolveDocumentLogos } from '../utils/logoResolver';
+import { useAutoSave, type AutoSaveStatus } from '../hooks/useAutoSave';
+import { AutoSaveIndicator } from './AutoSaveIndicator';
 import { LogoUploadModal } from './LogoUploadModal';
 
 interface FreezerChillerViewProps {
@@ -103,9 +105,14 @@ export const FreezerChillerView: React.FC<FreezerChillerViewProps> = ({
   const [savedNotice, setSavedNotice] = useState(false);
   const [logoModalSide, setLogoModalSide] = useState<'left' | 'right' | null>(null);
 
-  // Local edits for active machine & rows
+  // Local edits for active machine & rows + auto-save
   const [localMachine, setLocalMachine] = useState<FreezerMachine | null>(null);
   const [localRows, setLocalRows] = useState<Record<string, FreezerLogRow>>({});
+  const dirtyRowIdsRef = useRef<Set<string>>(new Set());
+  const rowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [rowAutoStatus, setRowAutoStatus] = useState<AutoSaveStatus>('idle');
+  const [rowLastSavedAt, setRowLastSavedAt] = useState<string>('');
+  const [rowErrorMsg, setRowErrorMsg] = useState<string | null>(null);
 
   const autoSeededMonthsRef = useRef<Set<string>>(new Set());
 
@@ -129,24 +136,250 @@ export const FreezerChillerView: React.FC<FreezerChillerViewProps> = ({
     }
   }, [machinesLoaded, machines.length, monthKey, onCreateMachine]);
 
-  useEffect(() => {
-    setDraftConfig({
+  const serializeFreezerCfg = useCallback(
+    (c: FreezerFormConfig) =>
+      JSON.stringify({
+        logoDataUrl: c.logoDataUrl || '',
+        logoWidthPx: c.logoWidthPx || 56,
+        logoRightDataUrl: c.logoRightDataUrl || '',
+        logoRightWidthPx: c.logoRightWidthPx || 56,
+        followGlobalLeftLogo: c.followGlobalLeftLogo !== false,
+        followGlobalRightLogo: c.followGlobalRightLogo !== false,
+        logoCaption: c.logoCaption,
+        unitName: c.unitName,
+        formLabel: c.formLabel,
+        formTitle: c.formTitle,
+        docNumber: c.docNumber,
+        revision: c.revision,
+        effectiveDate: c.effectiveDate,
+        periodeLabel: c.periodeLabel,
+        colLabels: { ...DEFAULT_FREEZER_COL_LABELS, ...(c.colLabels || {}) },
+      }),
+    []
+  );
+
+  const normalizedServerCfg = useMemo(
+    () => ({
       ...config,
       colLabels: { ...DEFAULT_FREEZER_COL_LABELS, ...(config.colLabels || {}) },
-    });
-  }, [config]);
+    }),
+    [config]
+  );
+  const cfgServerHash = useMemo(
+    () => serializeFreezerCfg(normalizedServerCfg),
+    [normalizedServerCfg, serializeFreezerCfg]
+  );
+  const lastCfgServerHashRef = useRef<string>(cfgServerHash);
+  const lastCfgMonthRef = useRef<string>(monthKey);
+  const draftCfgRef = useRef<FreezerFormConfig>(draftConfig);
+  draftCfgRef.current = draftConfig;
 
   useEffect(() => {
-    setLocalMachine(activeMachine ? { ...activeMachine } : null);
-  }, [activeMachine]);
+    const monthChanged = lastCfgMonthRef.current !== monthKey;
+    const isClean = serializeFreezerCfg(draftCfgRef.current) === lastCfgServerHashRef.current;
+    if (monthChanged || isClean) {
+      setDraftConfig(normalizedServerCfg);
+    }
+    lastCfgMonthRef.current = monthKey;
+    lastCfgServerHashRef.current = cfgServerHash;
+  }, [monthKey, normalizedServerCfg, cfgServerHash, serializeFreezerCfg]);
+
+  const {
+    status: cfgAutoStatus,
+    lastSavedAtLabel: cfgLastSavedAt,
+    errorMessage: cfgErrorMsg,
+    markSynced: markCfgSynced,
+  } = useAutoSave<FreezerFormConfig>({
+    value: draftConfig,
+    serverHash: cfgServerHash,
+    scopeKey: `freezer_cfg:${monthKey}`,
+    uid: profile.uid,
+    serialize: serializeFreezerCfg,
+    onSave: async (val) => {
+      const merged = { ...DEFAULT_FREEZER_COL_LABELS, ...(val.colLabels || {}) };
+      await onSaveConfig({
+        logoDataUrl: val.logoDataUrl || '',
+        logoWidthPx: val.logoWidthPx || 56,
+        logoRightDataUrl: val.logoRightDataUrl || '',
+        logoRightWidthPx: val.logoRightWidthPx || 56,
+        followGlobalLeftLogo: val.followGlobalLeftLogo !== false,
+        followGlobalRightLogo: val.followGlobalRightLogo !== false,
+        logoCaption: val.logoCaption,
+        unitName: val.unitName,
+        formLabel: val.formLabel,
+        formTitle: val.formTitle,
+        docNumber: val.docNumber,
+        revision: val.revision,
+        effectiveDate: val.effectiveDate,
+        periodeLabel: val.periodeLabel,
+        colLabels: merged,
+      });
+    },
+  });
+
+  const serializeMachine = useCallback(
+    (m: FreezerMachine | null) =>
+      m
+        ? JSON.stringify({
+            id: m.id,
+            machineOrder: m.machineOrder,
+            machineType: m.machineType,
+            namaMesin: m.namaMesin,
+            merk: m.merk,
+            noMesin: m.noMesin,
+            lokasi: m.lokasi,
+            normalSuhuBgn: m.normalSuhuBgn,
+            bgnSopNote: m.bgnSopNote,
+            conclusionHeader: m.conclusionHeader,
+            repairPrompt: m.repairPrompt,
+            repairNote: m.repairNote,
+          })
+        : 'null',
+    []
+  );
+
+  const machineServerHash = useMemo(
+    () => serializeMachine(activeMachine),
+    [activeMachine, serializeMachine]
+  );
+  const lastMachineIdRef = useRef<string | undefined>(activeMachine?.id);
+  const lastMachineHashRef = useRef<string>(machineServerHash);
+  const localMachineRef = useRef<FreezerMachine | null>(localMachine);
+  localMachineRef.current = localMachine;
 
   useEffect(() => {
-    const mapped: Record<string, FreezerLogRow> = {};
-    rows.forEach((r) => {
-      mapped[r.id] = r;
+    const idChanged = lastMachineIdRef.current !== activeMachine?.id;
+    const isClean = serializeMachine(localMachineRef.current) === lastMachineHashRef.current;
+    if (idChanged || isClean) {
+      setLocalMachine(activeMachine ? { ...activeMachine } : null);
+    }
+    lastMachineIdRef.current = activeMachine?.id;
+    lastMachineHashRef.current = machineServerHash;
+  }, [activeMachine, machineServerHash, serializeMachine]);
+
+  const {
+    status: machineAutoStatus,
+    lastSavedAtLabel: machineLastSavedAt,
+    errorMessage: machineErrorMsg,
+  } = useAutoSave<FreezerMachine | null>({
+    value: localMachine,
+    serverHash: machineServerHash,
+    scopeKey: `freezer_machine:${monthKey}:${activeMachine?.id || 'none'}`,
+    uid: profile.uid,
+    enabled: Boolean(localMachine && activeMachine),
+    serialize: serializeMachine,
+    onSave: async (m) => {
+      if (!m) return;
+      await onUpdateMachine(m.id, {
+        machineOrder: m.machineOrder,
+        machineType: m.machineType,
+        namaMesin: m.namaMesin,
+        merk: m.merk,
+        noMesin: m.noMesin,
+        lokasi: m.lokasi,
+        normalSuhuBgn: m.normalSuhuBgn,
+        bgnSopNote: m.bgnSopNote,
+        conclusionHeader: m.conclusionHeader,
+        repairPrompt: m.repairPrompt,
+        repairNote: m.repairNote,
+      });
+    },
+  });
+
+  const lastRowsMachineRef = useRef<string | undefined>(activeMachine?.id);
+  useEffect(() => {
+    if (lastRowsMachineRef.current !== activeMachine?.id) {
+      dirtyRowIdsRef.current.clear();
+      if (rowTimerRef.current) {
+        clearTimeout(rowTimerRef.current);
+        rowTimerRef.current = null;
+      }
+      lastRowsMachineRef.current = activeMachine?.id;
+    }
+    setLocalRows((prev) => {
+      const mapped: Record<string, FreezerLogRow> = {};
+      rows.forEach((r) => {
+        if (dirtyRowIdsRef.current.has(r.id) && prev[r.id]) {
+          mapped[r.id] = prev[r.id];
+        } else {
+          mapped[r.id] = r;
+        }
+      });
+      return mapped;
     });
-    setLocalRows(mapped);
   }, [rows, activeMachine?.id]);
+
+  const localRowsRef = useRef(localRows);
+  localRowsRef.current = localRows;
+  const activeMachineRef = useRef(activeMachine);
+  activeMachineRef.current = activeMachine;
+
+  const flushDirtyRows = useCallback(async () => {
+    if (rowTimerRef.current) {
+      clearTimeout(rowTimerRef.current);
+      rowTimerRef.current = null;
+    }
+    const machine = activeMachineRef.current;
+    const ids = Array.from(dirtyRowIdsRef.current);
+    if (!machine || ids.length === 0) return;
+    setRowAutoStatus('saving');
+    setRowErrorMsg(null);
+    try {
+      for (const id of ids) {
+        const row = localRowsRef.current[id];
+        dirtyRowIdsRef.current.delete(id);
+        if (!row) continue;
+        await onSaveRow(machine.id, {
+          id: row.id,
+          rowOrder: row.rowOrder,
+          noLabel: row.noLabel,
+          tanggal: row.tanggal,
+          jamCek1: row.jamCek1,
+          suhu1: row.suhu1,
+          pic1: row.pic1,
+          jamCek2: row.jamCek2,
+          suhu2: row.suhu2,
+          pic2: row.pic2,
+          jamCek3: row.jamCek3,
+          suhu3: row.suhu3,
+          pic3: row.pic3,
+          keterangan: row.keterangan,
+        });
+      }
+      const now = new Date();
+      setRowLastSavedAt(
+        `${String(now.getHours()).padStart(2, '0')}.${String(now.getMinutes()).padStart(2, '0')}.${String(now.getSeconds()).padStart(2, '0')}`
+      );
+      setRowAutoStatus('saved');
+    } catch (err) {
+      ids.forEach((id) => dirtyRowIdsRef.current.add(id));
+      setRowAutoStatus('error');
+      setRowErrorMsg(err instanceof Error ? err.message : 'Gagal auto-simpan log suhu.');
+    }
+  }, [onSaveRow]);
+
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === 'hidden' && dirtyRowIdsRef.current.size > 0) {
+        void flushDirtyRows();
+      }
+    };
+    const onUnload = () => {
+      if (dirtyRowIdsRef.current.size > 0) {
+        void flushDirtyRows();
+      }
+    };
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', onUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', onUnload);
+      if (rowTimerRef.current) clearTimeout(rowTimerRef.current);
+      if (dirtyRowIdsRef.current.size > 0) {
+        void flushDirtyRows();
+      }
+    };
+  }, [flushDirtyRows]);
 
   const labels: FreezerColumnLabels = {
     ...DEFAULT_FREEZER_COL_LABELS,
@@ -272,6 +505,7 @@ export const FreezerChillerView: React.FC<FreezerChillerViewProps> = ({
         });
       }
 
+      markCfgSynced(serializeFreezerCfg(draftConfig));
       setSavedNotice(true);
       setTimeout(() => setSavedNotice(false), 2500);
     } finally {
@@ -349,12 +583,19 @@ export const FreezerChillerView: React.FC<FreezerChillerViewProps> = ({
         [rowId]: { ...target, [field]: value },
       };
     });
+    dirtyRowIdsRef.current.add(rowId);
+    setRowAutoStatus('pending');
+    if (rowTimerRef.current) clearTimeout(rowTimerRef.current);
+    rowTimerRef.current = setTimeout(() => {
+      void flushDirtyRows();
+    }, 850);
   };
 
   const handleRowBlurSave = async (rowId: string) => {
     if (!activeMachine) return;
     const row = localRows[rowId];
     if (!row) return;
+    dirtyRowIdsRef.current.delete(rowId);
     await onSaveRow(activeMachine.id, {
       id: row.id,
       rowOrder: row.rowOrder,
@@ -371,6 +612,11 @@ export const FreezerChillerView: React.FC<FreezerChillerViewProps> = ({
       pic3: row.pic3,
       keterangan: row.keterangan,
     });
+    const now = new Date();
+    setRowLastSavedAt(
+      `${String(now.getHours()).padStart(2, '0')}.${String(now.getMinutes()).padStart(2, '0')}.${String(now.getSeconds()).padStart(2, '0')}`
+    );
+    setRowAutoStatus('saved');
   };
 
   const sortedRows = [...rows].sort((a, b) => a.rowOrder - b.rowOrder);
@@ -390,6 +636,21 @@ export const FreezerChillerView: React.FC<FreezerChillerViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <AutoSaveIndicator
+              status={
+                cfgAutoStatus === 'saving' || cfgAutoStatus === 'pending' || cfgAutoStatus === 'error'
+                  ? cfgAutoStatus
+                  : machineAutoStatus === 'saving' || machineAutoStatus === 'pending' || machineAutoStatus === 'error'
+                  ? machineAutoStatus
+                  : rowAutoStatus !== 'idle'
+                  ? rowAutoStatus
+                  : machineAutoStatus !== 'idle'
+                  ? machineAutoStatus
+                  : cfgAutoStatus
+              }
+              lastSavedAtLabel={rowLastSavedAt || machineLastSavedAt || cfgLastSavedAt}
+              errorMessage={rowErrorMsg || machineErrorMsg || cfgErrorMsg}
+            />
             {machines.length > 1 && (
               <button
                 type="button"

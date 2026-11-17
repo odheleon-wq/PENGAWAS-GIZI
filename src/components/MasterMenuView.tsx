@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarDays,
   Check,
@@ -31,6 +31,12 @@ import {
   generateMasterMenuWeeks,
 } from '../utils/masterMenuHelper';
 import { getDefaultMasterMenuPlan } from '../services/sppgService';
+import { useAutoSave } from '../hooks/useAutoSave';
+import {
+  clearScopedDraftBackup,
+  loadScopedDraftBackup,
+} from '../utils/sessionStorage';
+import { AutoSaveIndicator } from './AutoSaveIndicator';
 import { LogoUploadModal } from './LogoUploadModal';
 
 interface MasterMenuViewProps {
@@ -80,6 +86,33 @@ const DISH_ROWS: Array<{
   { field: 'susu', labelKey: 'susu', placeholder: 'Susu (opsional)' },
 ];
 
+function serializeMasterMenuContent(p: MasterMenuPlan): string {
+  return JSON.stringify({
+    title: p.title,
+    categoryIds: p.categoryIds,
+    cycleMode: p.cycleMode,
+    headerLine1: p.headerLine1,
+    headerLine2: p.headerLine2,
+    headerLine3: p.headerLine3,
+    headerAlamat: p.headerAlamat,
+    logoDataUrl: p.logoDataUrl,
+    logoWidthPx: p.logoWidthPx,
+    logoRightDataUrl: p.logoRightDataUrl,
+    logoRightWidthPx: p.logoRightWidthPx,
+    followGlobalLeftLogo: p.followGlobalLeftLogo,
+    followGlobalRightLogo: p.followGlobalRightLogo,
+    rowLabels: {
+      ...DEFAULT_MASTER_MENU_ROW_LABELS,
+      ...(p.rowLabels || {}),
+    },
+    weeks: p.weeks,
+  });
+}
+
+function getMasterMenuSelectionKey(uid: string, monthKey: string): string {
+  return `sppg_master_menu_sel:${uid}:${monthKey}`;
+}
+
 export const MasterMenuView: React.FC<MasterMenuViewProps> = ({
   uid,
   monthKey,
@@ -92,10 +125,17 @@ export const MasterMenuView: React.FC<MasterMenuViewProps> = ({
   onExportPdf,
   onSyncGlobalLeftLogo,
 }) => {
-  const [selectedPlanId, setSelectedPlanId] = useState<string>('');
+  const [selectedPlanId, setSelectedPlanId] = useState<string>(() => {
+    try {
+      return window.localStorage.getItem(getMasterMenuSelectionKey(uid, monthKey)) || '';
+    } catch {
+      return '';
+    }
+  });
   const [draft, setDraft] = useState<MasterMenuPlan>(() =>
     getDefaultMasterMenuPlan(uid, monthKey, profile, ['sd_1_3'], '4_minggu')
   );
+  const [draftSlotKey, setDraftSlotKey] = useState<string>('initial');
   const [showKopEditor, setShowKopEditor] = useState(false);
   const [logoModalSide, setLogoModalSide] = useState<'left' | 'right' | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -108,23 +148,167 @@ export const MasterMenuView: React.FC<MasterMenuViewProps> = ({
   const { year, month } = parseMonthKey(monthKey);
   const monthName = INDONESIAN_MONTHS[month - 1] || 'November';
 
+  const persistSelectedId = useCallback(
+    (id: string) => {
+      setSelectedPlanId(id);
+      try {
+        if (id && !id.startsWith('mm_draft_')) {
+          window.localStorage.setItem(getMasterMenuSelectionKey(uid, monthKey), id);
+        }
+      } catch {
+        // Ignore storage error
+      }
+    },
+    [uid, monthKey]
+  );
+
+  const currentServerPlan = useMemo(() => {
+    if (plans.length === 0) return null;
+    let storedId = selectedPlanId;
+    if (!storedId) {
+      try {
+        storedId = window.localStorage.getItem(getMasterMenuSelectionKey(uid, monthKey)) || '';
+      } catch {
+        storedId = '';
+      }
+    }
+    return plans.find((p) => p.id === storedId) || plans[0];
+  }, [plans, selectedPlanId, uid, monthKey]);
+
+  const serverHash = useMemo(() => {
+    if (!currentServerPlan) {
+      return serializeMasterMenuContent(
+        getDefaultMasterMenuPlan(uid, monthKey, profile, ['sd_1_3'], '4_minggu')
+      );
+    }
+    return serializeMasterMenuContent(currentServerPlan);
+  }, [currentServerPlan, uid, monthKey, profile]);
+
+  const lastMonthUidRef = useRef<string>(`${uid}:${monthKey}`);
+  const lastServerHashRef = useRef<string>(serverHash);
+  const currentDraftRef = useRef<MasterMenuPlan>(draft);
+  currentDraftRef.current = draft;
+
+  const autoSaveScopeKey = `master_menu:${monthKey}:${draftSlotKey}`;
+
   useEffect(() => {
     setConfirmDelete(false);
-    if (plans.length === 0) {
-      setSelectedPlanId('');
-      setDraft(getDefaultMasterMenuPlan(uid, monthKey, profile, ['sd_1_3'], '4_minggu'));
+    const scopeId = `${uid}:${monthKey}`;
+    const scopeChanged = lastMonthUidRef.current !== scopeId;
+
+    if (scopeChanged) {
+      lastMonthUidRef.current = scopeId;
+      let storedId = '';
+      try {
+        storedId = window.localStorage.getItem(getMasterMenuSelectionKey(uid, monthKey)) || '';
+      } catch {
+        storedId = '';
+      }
+      const nextTarget =
+        (storedId ? plans.find((p) => p.id === storedId) : undefined) || plans[0] || null;
+      const basePlan =
+        nextTarget || getDefaultMasterMenuPlan(uid, monthKey, profile, ['sd_1_3'], '4_minggu');
+      const slot = nextTarget ? nextTarget.id : 'new';
+      setDraftSlotKey(slot);
+      persistSelectedId(nextTarget ? nextTarget.id : '');
+
+      const recovered = loadScopedDraftBackup<MasterMenuPlan>(
+        uid,
+        `master_menu:${monthKey}:${slot}`
+      );
+      if (recovered) {
+        setDraft({
+          ...recovered,
+          rowLabels: {
+            ...DEFAULT_MASTER_MENU_ROW_LABELS,
+            ...(recovered.rowLabels || {}),
+          },
+        });
+      } else {
+        setDraft({
+          ...basePlan,
+          rowLabels: {
+            ...DEFAULT_MASTER_MENU_ROW_LABELS,
+            ...(basePlan.rowLabels || {}),
+          },
+        });
+      }
+      lastServerHashRef.current = serializeMasterMenuContent(basePlan);
       return;
     }
+
+    if (plans.length === 0) {
+      if (serializeMasterMenuContent(currentDraftRef.current) === lastServerHashRef.current) {
+        const freshDefault = getDefaultMasterMenuPlan(
+          uid,
+          monthKey,
+          profile,
+          ['sd_1_3'],
+          '4_minggu'
+        );
+        setSelectedPlanId('');
+        setDraftSlotKey('new');
+        setDraft(freshDefault);
+        lastServerHashRef.current = serializeMasterMenuContent(freshDefault);
+      }
+      return;
+    }
+
     const existing = plans.find((p) => p.id === selectedPlanId) || plans[0];
-    setSelectedPlanId(existing.id);
-    setDraft({
-      ...existing,
-      rowLabels: {
-        ...DEFAULT_MASTER_MENU_ROW_LABELS,
-        ...(existing.rowLabels || {}),
-      },
-    });
-  }, [plans, monthKey, uid]);
+    const nextServerHash = serializeMasterMenuContent(existing);
+    const isDraftClean =
+      serializeMasterMenuContent(currentDraftRef.current) === lastServerHashRef.current;
+
+    if (isDraftClean || currentDraftRef.current.id.startsWith('mm_draft_') === false && selectedPlanId !== existing.id) {
+      persistSelectedId(existing.id);
+      if (isDraftClean) {
+        setDraftSlotKey(existing.id);
+        setDraft({
+          ...existing,
+          rowLabels: {
+            ...DEFAULT_MASTER_MENU_ROW_LABELS,
+            ...(existing.rowLabels || {}),
+          },
+        });
+      }
+    }
+    lastServerHashRef.current = nextServerHash;
+  }, [plans, monthKey, uid, profile, selectedPlanId, persistSelectedId]);
+
+  const {
+    status: autoSaveStatus,
+    lastSavedAtLabel,
+    errorMessage: autoSaveError,
+    markSynced,
+  } = useAutoSave<MasterMenuPlan>({
+    value: draft,
+    serverHash,
+    scopeKey: autoSaveScopeKey,
+    uid,
+    serialize: serializeMasterMenuContent,
+    onSave: async (val) => {
+      const savedId = await onSavePlan({
+        id: val.id,
+        title: val.title,
+        categoryIds: val.categoryIds,
+        cycleMode: val.cycleMode,
+        headerLine1: val.headerLine1,
+        headerLine2: val.headerLine2,
+        headerLine3: val.headerLine3,
+        headerAlamat: val.headerAlamat,
+        logoDataUrl: val.logoDataUrl,
+        logoWidthPx: val.logoWidthPx,
+        logoRightDataUrl: val.logoRightDataUrl,
+        logoRightWidthPx: val.logoRightWidthPx,
+        followGlobalLeftLogo: val.followGlobalLeftLogo,
+        followGlobalRightLogo: val.followGlobalRightLogo,
+        rowLabels: val.rowLabels,
+        weeks: val.weeks,
+      });
+      persistSelectedId(savedId);
+      setDraft((prev) => (prev.id === savedId ? prev : { ...prev, id: savedId }));
+    },
+  });
 
   const resolvedLogos = useMemo(
     () =>
@@ -145,14 +329,17 @@ export const MasterMenuView: React.FC<MasterMenuViewProps> = ({
     setErrorMsg(null);
     const found = plans.find((p) => p.id === id);
     if (found) {
-      setSelectedPlanId(found.id);
-      setDraft({
+      persistSelectedId(found.id);
+      setDraftSlotKey(found.id);
+      const nextPlan: MasterMenuPlan = {
         ...found,
         rowLabels: {
           ...DEFAULT_MASTER_MENU_ROW_LABELS,
           ...(found.rowLabels || {}),
         },
-      });
+      };
+      setDraft(nextPlan);
+      lastServerHashRef.current = serializeMasterMenuContent(nextPlan);
     }
   };
 
@@ -162,7 +349,9 @@ export const MasterMenuView: React.FC<MasterMenuViewProps> = ({
     setErrorMsg(null);
     const next = getDefaultMasterMenuPlan(uid, monthKey, profile, ['sd_1_3'], '4_minggu');
     setSelectedPlanId(next.id);
+    setDraftSlotKey(next.id);
     setDraft(next);
+    lastServerHashRef.current = serializeMasterMenuContent(next);
   };
 
   const handleCycleChange = (newMode: MasterMenuCycleMode) => {
@@ -252,8 +441,10 @@ export const MasterMenuView: React.FC<MasterMenuViewProps> = ({
         rowLabels: draft.rowLabels,
         weeks: draft.weeks,
       });
-      setSelectedPlanId(savedId);
+      persistSelectedId(savedId);
       setDraft((prev) => ({ ...prev, id: savedId }));
+      markSynced(serializeMasterMenuContent(draft));
+      clearScopedDraftBackup(uid, autoSaveScopeKey);
       setNoticeMsg('Master Menu berhasil disimpan.');
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Gagal menyimpan Master Menu.');
@@ -678,15 +869,22 @@ export const MasterMenuView: React.FC<MasterMenuViewProps> = ({
 
         {/* Primary Action Strip */}
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200">
-          <div className="text-xs text-slate-600">
-            Terisi{' '}
-            <span className="font-mono-num font-bold text-slate-900">
-              {filledDaysCount} / {allDays.length}
-            </span>{' '}
-            hari menu · Sasaran:{' '}
-            <span className="font-semibold text-emerald-700">
-              {draft.categoryIds.length} kategori
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+            <span>
+              Terisi{' '}
+              <span className="font-mono-num font-bold text-slate-900">
+                {filledDaysCount} / {allDays.length}
+              </span>{' '}
+              hari menu · Sasaran:{' '}
+              <span className="font-semibold text-emerald-700">
+                {draft.categoryIds.length} kategori
+              </span>
             </span>
+            <AutoSaveIndicator
+              status={autoSaveStatus}
+              lastSavedAtLabel={lastSavedAtLabel}
+              errorMessage={autoSaveError}
+            />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">

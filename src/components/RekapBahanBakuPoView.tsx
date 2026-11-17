@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Download,
   Edit3,
@@ -22,6 +22,12 @@ import {
   computeRawMaterialRecap,
 } from '../utils/foodCostCalculator';
 import { resolveDocumentLogos } from '../utils/logoResolver';
+import { useAutoSave } from '../hooks/useAutoSave';
+import {
+  clearScopedDraftBackup,
+  loadScopedDraftBackup,
+} from '../utils/sessionStorage';
+import { AutoSaveIndicator } from './AutoSaveIndicator';
 import { LogoUploadModal } from './LogoUploadModal';
 
 interface RekapBahanBakuPoViewProps {
@@ -57,6 +63,37 @@ function fmtRp(n: number): string {
   return Math.round(n).toLocaleString('id-ID');
 }
 
+function serializeRecapConfig(cfg: RawMaterialRecapDayConfig): string {
+  return JSON.stringify({
+    dateIso: cfg.dateIso,
+    hariKe: cfg.hariKe,
+    headerLine1: cfg.headerLine1,
+    headerLine2: cfg.headerLine2,
+    headerLine3: cfg.headerLine3,
+    headerAlamat: cfg.headerAlamat,
+    logoDataUrl: cfg.logoDataUrl,
+    logoWidthPx: cfg.logoWidthPx,
+    logoRightDataUrl: cfg.logoRightDataUrl,
+    logoRightWidthPx: cfg.logoRightWidthPx,
+    followGlobalLeftLogo: cfg.followGlobalLeftLogo,
+    followGlobalRightLogo: cfg.followGlobalRightLogo,
+    recapTitle: cfg.recapTitle,
+    sideLabel: cfg.sideLabel,
+    bufferPercent: cfg.bufferPercent,
+    bumbuPercent: cfg.bumbuPercent,
+    rabPorsiKecilRate: cfg.rabPorsiKecilRate,
+    rabPorsiBesarRate: cfg.rabPorsiBesarRate,
+    poJudul: cfg.poJudul,
+    poDari: cfg.poDari,
+    poKepada: cfg.poKepada,
+    poAlamat: cfg.poAlamat,
+    poSignerLabel1: cfg.poSignerLabel1,
+    poSignerLabel2: cfg.poSignerLabel2,
+    poSignerName: cfg.poSignerName,
+    itemOverrides: cfg.itemOverrides,
+  });
+}
+
 export const RekapBahanBakuPoView: React.FC<RekapBahanBakuPoViewProps> = ({
   uid,
   profile,
@@ -72,7 +109,21 @@ export const RekapBahanBakuPoView: React.FC<RekapBahanBakuPoViewProps> = ({
   onSyncGlobalLeftLogo,
   onExportPdf,
 }) => {
-  const [subTab, setSubTab] = useState<'rekap' | 'po' | 'both'>(initialSubTab || 'rekap');
+  const subTabStorageKey = `sppg_po_subtab_v1:${uid}`;
+  const [subTab, setSubTab] = useState<'rekap' | 'po' | 'both'>(() => {
+    try {
+      const saved = window.localStorage.getItem(`sppg_po_subtab_v1:${uid}`);
+      if (saved === 'both' || saved === 'rekap' || saved === 'po') {
+        if (initialSubTab && initialSubTab !== saved && saved !== 'both') {
+          return initialSubTab;
+        }
+        return saved;
+      }
+    } catch {
+      // Ignore storage error
+    }
+    return initialSubTab || 'rekap';
+  });
   const [showHeaderEdit, setShowHeaderEdit] = useState(false);
   const [saving, setSaving] = useState(false);
   const [logoModalSide, setLogoModalSide] = useState<'left' | 'right' | null>(null);
@@ -82,6 +133,14 @@ export const RekapBahanBakuPoView: React.FC<RekapBahanBakuPoViewProps> = ({
       setSubTab(initialSubTab);
     }
   }, [initialSubTab]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(subTabStorageKey, subTab);
+    } catch {
+      // Ignore storage error
+    }
+  }, [subTabStorageKey, subTab]);
 
   const matchedEntry = useMemo(
     () => entries.find((e) => e.dateIso === activeDateIso) || null,
@@ -100,32 +159,91 @@ export const RekapBahanBakuPoView: React.FC<RekapBahanBakuPoViewProps> = ({
     [poRecaps, activeDateIso]
   );
 
-  const [draft, setDraft] = useState<RawMaterialRecapDayConfig>(() =>
-    existingConfig ||
-    getDefaultRawMaterialRecapDayConfig(
-      uid,
-      monthKey,
-      activeDateIso,
-      matchedEntry?.hariKe || 1,
-      profile
-    )
+  const serverBase = useMemo(
+    () =>
+      existingConfig ||
+      getDefaultRawMaterialRecapDayConfig(
+        uid,
+        monthKey,
+        activeDateIso,
+        matchedEntry?.hariKe || 1,
+        profile
+      ),
+    [existingConfig, uid, monthKey, activeDateIso, matchedEntry?.hariKe, profile]
   );
 
+  const serverHash = useMemo(() => serializeRecapConfig(serverBase), [serverBase]);
+  const scopeKey = `po_recap:${monthKey}:${activeDateIso}`;
+
+  const [draft, setDraft] = useState<RawMaterialRecapDayConfig>(() => {
+    const recovered = loadScopedDraftBackup<RawMaterialRecapDayConfig>(uid, scopeKey);
+    return recovered || serverBase;
+  });
+
+  const lastScopeRef = useRef<string>(scopeKey);
+  const lastServerHashRef = useRef<string>(serverHash);
+  const currentDraftRef = useRef<RawMaterialRecapDayConfig>(draft);
+  currentDraftRef.current = draft;
+
   useEffect(() => {
-    if (existingConfig) {
-      setDraft(existingConfig);
-    } else {
-      setDraft(
-        getDefaultRawMaterialRecapDayConfig(
-          uid,
-          monthKey,
-          activeDateIso,
-          matchedEntry?.hariKe || 1,
-          profile
-        )
-      );
+    const scopeChanged = lastScopeRef.current !== scopeKey;
+    if (scopeChanged) {
+      lastScopeRef.current = scopeKey;
+      const recovered = loadScopedDraftBackup<RawMaterialRecapDayConfig>(uid, scopeKey);
+      setDraft(recovered || serverBase);
+      lastServerHashRef.current = serverHash;
+      return;
     }
-  }, [existingConfig, uid, monthKey, activeDateIso, matchedEntry?.hariKe, profile]);
+
+    const isClean = serializeRecapConfig(currentDraftRef.current) === lastServerHashRef.current;
+    if (isClean) {
+      setDraft(serverBase);
+    }
+    lastServerHashRef.current = serverHash;
+  }, [scopeKey, uid, serverBase, serverHash]);
+
+  const {
+    status: autoSaveStatus,
+    lastSavedAtLabel,
+    errorMessage: autoSaveError,
+    markSynced,
+  } = useAutoSave<RawMaterialRecapDayConfig>({
+    value: draft,
+    serverHash,
+    scopeKey,
+    uid,
+    serialize: serializeRecapConfig,
+    onSave: async (val) => {
+      await onSaveRecapConfig({
+        dateIso: val.dateIso,
+        hariKe: val.hariKe,
+        headerLine1: val.headerLine1,
+        headerLine2: val.headerLine2,
+        headerLine3: val.headerLine3,
+        headerAlamat: val.headerAlamat,
+        logoDataUrl: val.logoDataUrl,
+        logoWidthPx: val.logoWidthPx,
+        logoRightDataUrl: val.logoRightDataUrl,
+        logoRightWidthPx: val.logoRightWidthPx,
+        followGlobalLeftLogo: val.followGlobalLeftLogo,
+        followGlobalRightLogo: val.followGlobalRightLogo,
+        recapTitle: val.recapTitle,
+        sideLabel: val.sideLabel,
+        bufferPercent: val.bufferPercent,
+        bumbuPercent: val.bumbuPercent,
+        rabPorsiKecilRate: val.rabPorsiKecilRate,
+        rabPorsiBesarRate: val.rabPorsiBesarRate,
+        poJudul: val.poJudul,
+        poDari: val.poDari,
+        poKepada: val.poKepada,
+        poAlamat: val.poAlamat,
+        poSignerLabel1: val.poSignerLabel1,
+        poSignerLabel2: val.poSignerLabel2,
+        poSignerName: val.poSignerName,
+        itemOverrides: val.itemOverrides,
+      });
+    },
+  });
 
   const pmSummary = useMemo(() => computePmSummary(activePmRecord), [activePmRecord]);
 
@@ -178,6 +296,8 @@ export const RekapBahanBakuPoView: React.FC<RekapBahanBakuPoViewProps> = ({
         poSignerName: next.poSignerName,
         itemOverrides: next.itemOverrides,
       });
+      markSynced(serializeRecapConfig(next));
+      clearScopedDraftBackup(uid, scopeKey);
     } finally {
       setSaving(false);
     }
@@ -256,6 +376,11 @@ export const RekapBahanBakuPoView: React.FC<RekapBahanBakuPoViewProps> = ({
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <AutoSaveIndicator
+              status={autoSaveStatus}
+              lastSavedAtLabel={lastSavedAtLabel}
+              errorMessage={autoSaveError}
+            />
             <button
               type="button"
               onClick={() => setShowHeaderEdit((v) => !v)}

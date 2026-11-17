@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   Edit3,
@@ -18,6 +18,8 @@ import type {
   SppgUserProfile,
 } from '../types';
 import { resolveDocumentLogos } from '../utils/logoResolver';
+import { useAutoSave, type AutoSaveStatus } from '../hooks/useAutoSave';
+import { AutoSaveIndicator } from './AutoSaveIndicator';
 import { LogoUploadModal } from './LogoUploadModal';
 
 interface SamplePertinggalViewProps {
@@ -59,23 +61,188 @@ export const SamplePertinggalView: React.FC<SamplePertinggalViewProps> = ({
   const [savedNotice, setSavedNotice] = useState(false);
   const [logoModalSide, setLogoModalSide] = useState<'left' | 'right' | null>(null);
 
-  // Local inline edits per row ID so typing is zero-lag before saving on blur
+  // Local inline edits per row ID so typing is zero-lag before auto-save
   const [localRows, setLocalRows] = useState<Record<string, SamplePertinggalRow>>({});
+  const dirtyRowIdsRef = useRef<Set<string>>(new Set());
+  const rowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [rowAutoStatus, setRowAutoStatus] = useState<AutoSaveStatus>('idle');
+  const [rowLastSavedAt, setRowLastSavedAt] = useState<string>('');
+  const [rowErrorMsg, setRowErrorMsg] = useState<string | null>(null);
+
+  const normalizeCfg = useCallback(
+    (c: SampleFormConfig): SampleFormConfig => ({
+      ...c,
+      colLabels: { ...DEFAULT_SAMPLE_COLUMN_LABELS, ...(c.colLabels || {}) },
+    }),
+    []
+  );
+  const serializeSampleCfg = useCallback(
+    (c: SampleFormConfig) =>
+      JSON.stringify({
+        logoDataUrl: c.logoDataUrl || '',
+        logoWidthPx: c.logoWidthPx || 56,
+        logoRightDataUrl: c.logoRightDataUrl || '',
+        logoRightWidthPx: c.logoRightWidthPx || 56,
+        followGlobalLeftLogo: c.followGlobalLeftLogo !== false,
+        followGlobalRightLogo: c.followGlobalRightLogo !== false,
+        logoCaption: c.logoCaption,
+        unitName: c.unitName,
+        formLabel: c.formLabel,
+        formTitle: c.formTitle,
+        docNumber: c.docNumber,
+        revision: c.revision,
+        effectiveDate: c.effectiveDate,
+        bulanLabel: c.bulanLabel,
+        tahunLabel: c.tahunLabel,
+        colLabels: { ...DEFAULT_SAMPLE_COLUMN_LABELS, ...(c.colLabels || {}) },
+        verifierLine1: c.verifierLine1,
+        verifierLine2: c.verifierLine2,
+        verifierName: c.verifierName,
+      }),
+    []
+  );
+
+  const normalizedServerCfg = useMemo(() => normalizeCfg(config), [config, normalizeCfg]);
+  const configServerHash = useMemo(
+    () => serializeSampleCfg(normalizedServerCfg),
+    [normalizedServerCfg, serializeSampleCfg]
+  );
+  const lastConfigServerHashRef = useRef<string>(configServerHash);
+  const lastConfigMonthRef = useRef<string>(monthKey);
+  const draftConfigRef = useRef<SampleFormConfig>(draftConfig);
+  draftConfigRef.current = draftConfig;
 
   useEffect(() => {
-    setDraftConfig({
-      ...config,
-      colLabels: { ...DEFAULT_SAMPLE_COLUMN_LABELS, ...(config.colLabels || {}) },
-    });
-  }, [config]);
+    const monthChanged = lastConfigMonthRef.current !== monthKey;
+    const isClean = serializeSampleCfg(draftConfigRef.current) === lastConfigServerHashRef.current;
+    if (monthChanged || isClean) {
+      setDraftConfig(normalizedServerCfg);
+    }
+    lastConfigMonthRef.current = monthKey;
+    lastConfigServerHashRef.current = configServerHash;
+  }, [monthKey, normalizedServerCfg, configServerHash, serializeSampleCfg]);
+
+  const {
+    status: cfgAutoStatus,
+    lastSavedAtLabel: cfgLastSavedAt,
+    errorMessage: cfgErrorMsg,
+    markSynced: markCfgSynced,
+  } = useAutoSave<SampleFormConfig>({
+    value: draftConfig,
+    serverHash: configServerHash,
+    scopeKey: `sample_cfg:${monthKey}`,
+    uid: profile.uid,
+    serialize: serializeSampleCfg,
+    onSave: async (val) => {
+      const mergedLabels = { ...DEFAULT_SAMPLE_COLUMN_LABELS, ...(val.colLabels || {}) };
+      await onSaveConfig({
+        logoDataUrl: val.logoDataUrl || '',
+        logoWidthPx: val.logoWidthPx || 56,
+        logoRightDataUrl: val.logoRightDataUrl || '',
+        logoRightWidthPx: val.logoRightWidthPx || 56,
+        followGlobalLeftLogo: val.followGlobalLeftLogo !== false,
+        followGlobalRightLogo: val.followGlobalRightLogo !== false,
+        logoCaption: val.logoCaption,
+        unitName: val.unitName,
+        formLabel: val.formLabel,
+        formTitle: val.formTitle,
+        docNumber: val.docNumber,
+        revision: val.revision,
+        effectiveDate: val.effectiveDate,
+        bulanLabel: val.bulanLabel,
+        tahunLabel: val.tahunLabel,
+        colLabels: mergedLabels,
+        verifierLine1: val.verifierLine1,
+        verifierLine2: val.verifierLine2,
+        verifierName: val.verifierName,
+      });
+    },
+  });
 
   useEffect(() => {
-    const mapped: Record<string, SamplePertinggalRow> = {};
-    rows.forEach((r) => {
-      mapped[r.id] = r;
+    setLocalRows((prev) => {
+      const mapped: Record<string, SamplePertinggalRow> = {};
+      rows.forEach((r) => {
+        if (dirtyRowIdsRef.current.has(r.id) && prev[r.id]) {
+          mapped[r.id] = prev[r.id];
+        } else {
+          mapped[r.id] = r;
+        }
+      });
+      return mapped;
     });
-    setLocalRows(mapped);
   }, [rows]);
+
+  const localRowsRef = useRef(localRows);
+  localRowsRef.current = localRows;
+
+  const flushDirtyRows = useCallback(async () => {
+    if (rowTimerRef.current) {
+      clearTimeout(rowTimerRef.current);
+      rowTimerRef.current = null;
+    }
+    const ids = Array.from(dirtyRowIdsRef.current);
+    if (ids.length === 0) return;
+    setRowAutoStatus('saving');
+    setRowErrorMsg(null);
+    try {
+      for (const id of ids) {
+        const row = localRowsRef.current[id];
+        if (!row) {
+          dirtyRowIdsRef.current.delete(id);
+          continue;
+        }
+        dirtyRowIdsRef.current.delete(id);
+        await onSaveRow({
+          id: row.id,
+          rowOrder: row.rowOrder,
+          kodeIdentitas: row.kodeIdentitas,
+          jumlahSampel: row.jumlahSampel,
+          kondisiOk: row.kondisiOk,
+          kondisiNok: row.kondisiNok,
+          penanggungJawab: row.penanggungJawab,
+          masukTanggal: row.masukTanggal,
+          masukJam: row.masukJam,
+          keluarTanggal: row.keluarTanggal,
+          keluarJam: row.keluarJam,
+        });
+      }
+      const now = new Date();
+      setRowLastSavedAt(
+        `${String(now.getHours()).padStart(2, '0')}.${String(now.getMinutes()).padStart(2, '0')}.${String(now.getSeconds()).padStart(2, '0')}`
+      );
+      setRowAutoStatus('saved');
+    } catch (err) {
+      ids.forEach((id) => dirtyRowIdsRef.current.add(id));
+      setRowAutoStatus('error');
+      setRowErrorMsg(err instanceof Error ? err.message : 'Gagal auto-simpan baris sampel.');
+    }
+  }, [onSaveRow]);
+
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === 'hidden' && dirtyRowIdsRef.current.size > 0) {
+        void flushDirtyRows();
+      }
+    };
+    const onUnload = () => {
+      if (dirtyRowIdsRef.current.size > 0) {
+        void flushDirtyRows();
+      }
+    };
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', onUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('pagehide', onUnload);
+      if (rowTimerRef.current) {
+        clearTimeout(rowTimerRef.current);
+      }
+      if (dirtyRowIdsRef.current.size > 0) {
+        void flushDirtyRows();
+      }
+    };
+  }, [flushDirtyRows]);
 
   const labels: SampleColumnLabels = {
     ...DEFAULT_SAMPLE_COLUMN_LABELS,
@@ -145,6 +312,7 @@ export const SamplePertinggalView: React.FC<SamplePertinggalViewProps> = ({
         verifierLine2: draftConfig.verifierLine2,
         verifierName: draftConfig.verifierName,
       });
+      markCfgSynced(serializeSampleCfg(draftConfig));
       setSavedNotice(true);
       setTimeout(() => setSavedNotice(false), 2500);
     } finally {
@@ -206,11 +374,18 @@ export const SamplePertinggalView: React.FC<SamplePertinggalViewProps> = ({
         [rowId]: { ...target, [field]: value },
       };
     });
+    dirtyRowIdsRef.current.add(rowId);
+    setRowAutoStatus('pending');
+    if (rowTimerRef.current) clearTimeout(rowTimerRef.current);
+    rowTimerRef.current = setTimeout(() => {
+      void flushDirtyRows();
+    }, 850);
   };
 
   const handleRowBlurSave = async (rowId: string) => {
     const row = localRows[rowId];
     if (!row) return;
+    dirtyRowIdsRef.current.delete(rowId);
     await onSaveRow({
       id: row.id,
       rowOrder: row.rowOrder,
@@ -224,6 +399,11 @@ export const SamplePertinggalView: React.FC<SamplePertinggalViewProps> = ({
       keluarTanggal: row.keluarTanggal,
       keluarJam: row.keluarJam,
     });
+    const now = new Date();
+    setRowLastSavedAt(
+      `${String(now.getHours()).padStart(2, '0')}.${String(now.getMinutes()).padStart(2, '0')}.${String(now.getSeconds()).padStart(2, '0')}`
+    );
+    setRowAutoStatus('saved');
   };
 
   const handleToggleOkNok = async (rowId: string, which: 'kondisiOk' | 'kondisiNok') => {
@@ -268,6 +448,17 @@ export const SamplePertinggalView: React.FC<SamplePertinggalViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <AutoSaveIndicator
+            status={
+              cfgAutoStatus === 'saving' || cfgAutoStatus === 'pending' || cfgAutoStatus === 'error'
+                ? cfgAutoStatus
+                : rowAutoStatus !== 'idle'
+                ? rowAutoStatus
+                : cfgAutoStatus
+            }
+            lastSavedAtLabel={rowLastSavedAt || cfgLastSavedAt}
+            errorMessage={rowErrorMsg || cfgErrorMsg}
+          />
           {menuEntries.length > 0 && (
             <button
               type="button"

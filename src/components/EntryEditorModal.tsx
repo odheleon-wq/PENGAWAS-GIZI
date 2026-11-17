@@ -1,10 +1,18 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, Crop, Save, Trash2, Upload, X } from 'lucide-react';
 import type { DailyMenuEntry } from '../types';
 import { formatIndonesianFullDate } from '../utils/dateUtils';
+import { useAutoSave } from '../hooks/useAutoSave';
+import {
+  clearScopedDraftBackup,
+  loadScopedDraftBackup,
+  saveScopedDraftBackup,
+} from '../utils/sessionStorage';
+import { AutoSaveIndicator } from './AutoSaveIndicator';
 import { PhotoCropModal } from './PhotoCropModal';
 
 interface EntryEditorModalProps {
+  uid?: string;
   monthKey: string;
   initialDateIso: string;
   suggestedHariKe: number;
@@ -21,6 +29,7 @@ interface EntryEditorModalProps {
 }
 
 export const EntryEditorModal: React.FC<EntryEditorModalProps> = ({
+  uid,
   monthKey,
   initialDateIso,
   suggestedHariKe,
@@ -29,10 +38,32 @@ export const EntryEditorModal: React.FC<EntryEditorModalProps> = ({
   onSave,
   onDelete,
 }) => {
-  const [dateIso, setDateIso] = useState(existingEntry?.dateIso || initialDateIso);
-  const [hariKe, setHariKe] = useState<number>(existingEntry?.hariKe || suggestedHariKe);
-  const [namaMenu, setNamaMenu] = useState(existingEntry?.namaMenu || '');
-  const [photoDataUrl, setPhotoDataUrl] = useState(existingEntry?.photoDataUrl || '');
+  const effectiveUid = uid || existingEntry?.uid || 'local';
+  const draftScopeKey = `entry_modal:${monthKey}:${existingEntry?.id || initialDateIso}`;
+  const initialRecovered = useMemo(
+    () =>
+      loadScopedDraftBackup<{
+        dateIso?: string;
+        hariKe?: number;
+        namaMenu?: string;
+        photoDataUrl?: string;
+      }>(effectiveUid, draftScopeKey),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [effectiveUid, draftScopeKey]
+  );
+
+  const [dateIso, setDateIso] = useState(
+    initialRecovered?.dateIso || existingEntry?.dateIso || initialDateIso
+  );
+  const [hariKe, setHariKe] = useState<number>(
+    initialRecovered?.hariKe ?? existingEntry?.hariKe ?? suggestedHariKe
+  );
+  const [namaMenu, setNamaMenu] = useState(
+    initialRecovered?.namaMenu ?? existingEntry?.namaMenu ?? ''
+  );
+  const [photoDataUrl, setPhotoDataUrl] = useState(
+    initialRecovered?.photoDataUrl ?? existingEntry?.photoDataUrl ?? ''
+  );
   const [cropperState, setCropperState] = useState<{
     open: boolean;
     src: string | null;
@@ -40,6 +71,54 @@ export const EntryEditorModal: React.FC<EntryEditorModalProps> = ({
   }>({ open: false, src: null, mode: 'crop' });
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const serverHash = useMemo(
+    () =>
+      JSON.stringify({
+        dateIso: existingEntry?.dateIso || initialDateIso,
+        hariKe: existingEntry?.hariKe || suggestedHariKe,
+        namaMenu: existingEntry?.namaMenu || '',
+        photoDataUrl: existingEntry?.photoDataUrl || '',
+      }),
+    [existingEntry, initialDateIso, suggestedHariKe]
+  );
+
+  const draftValue = useMemo(
+    () => ({ dateIso, hariKe, namaMenu, photoDataUrl }),
+    [dateIso, hariKe, namaMenu, photoDataUrl]
+  );
+
+  useEffect(() => {
+    const curHash = JSON.stringify(draftValue);
+    if (curHash !== serverHash) {
+      saveScopedDraftBackup(effectiveUid, draftScopeKey, draftValue);
+    }
+  }, [draftValue, serverHash, effectiveUid, draftScopeKey]);
+
+  const {
+    status: autoSaveStatus,
+    lastSavedAtLabel,
+    errorMessage: autoSaveError,
+    markSynced,
+  } = useAutoSave({
+    value: draftValue,
+    serverHash,
+    scopeKey: draftScopeKey,
+    uid: effectiveUid,
+    enabled: Boolean(
+      existingEntry && namaMenu.trim().length > 0 && dateIso.startsWith(monthKey)
+    ),
+    onSave: async (val) => {
+      if (!existingEntry) return;
+      await onSave({
+        entryId: existingEntry.id,
+        dateIso: val.dateIso,
+        hariKe: Math.max(1, Number(val.hariKe) || 1),
+        namaMenu: val.namaMenu.trim(),
+        photoDataUrl: val.photoDataUrl,
+      });
+    },
+  });
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -81,6 +160,8 @@ export const EntryEditorModal: React.FC<EntryEditorModalProps> = ({
         namaMenu: namaMenu.trim(),
         photoDataUrl,
       });
+      markSynced(JSON.stringify(draftValue));
+      clearScopedDraftBackup(effectiveUid, draftScopeKey);
       onClose();
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Gagal menyimpan menu harian.');
@@ -94,11 +175,17 @@ export const EntryEditorModal: React.FC<EntryEditorModalProps> = ({
     setSaving(true);
     try {
       await onDelete(existingEntry.id);
+      clearScopedDraftBackup(effectiveUid, draftScopeKey);
       onClose();
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Gagal menghapus entri.');
       setSaving(false);
     }
+  };
+
+  const handleDiscardAndClose = () => {
+    clearScopedDraftBackup(effectiveUid, draftScopeKey);
+    onClose();
   };
 
   return (
@@ -119,14 +206,25 @@ export const EntryEditorModal: React.FC<EntryEditorModalProps> = ({
                 {formatIndonesianFullDate(dateIso)}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-              aria-label="Tutup"
-            >
-              <X className="h-5 w-5" />
-            </button>
+            <div className="flex items-center gap-3">
+              {existingEntry ? (
+                <AutoSaveIndicator
+                  status={autoSaveStatus}
+                  lastSavedAtLabel={lastSavedAtLabel}
+                  errorMessage={autoSaveError}
+                />
+              ) : (
+                <span className="text-[11px] text-slate-400">Draf otomatis aktif</span>
+              )}
+              <button
+                type="button"
+                onClick={handleDiscardAndClose}
+                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                aria-label="Tutup"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
           </div>
 
           <form onSubmit={handleSubmit} className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
@@ -296,7 +394,7 @@ export const EntryEditorModal: React.FC<EntryEditorModalProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={onClose}
+                  onClick={handleDiscardAndClose}
                   className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100"
                 >
                   Batal

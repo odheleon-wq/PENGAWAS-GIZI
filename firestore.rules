@@ -29,6 +29,10 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email == 'odheleon@gmail.com';
+    }
+
     function isValidLogoWidth(w) {
       return (w is int || w is float) && w >= 20 && w <= 180;
     }
@@ -585,7 +589,136 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidUserAccessRecord(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'email', 'displayName', 'photoUrl', 'status', 'role',
+          'waitingNote', 'firstLoginAt', 'lastLoginAt', 'loginCount',
+          'accessStartDate', 'accessExpiresAt', 'approvedBy', 'approvedAt',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'photoUrl', 'status', 'role',
+          'waitingNote', 'firstLoginAt', 'lastLoginAt', 'loginCount',
+          'accessStartDate', 'accessExpiresAt', 'approvedBy', 'approvedAt',
+          'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == userId && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.email is string && data.email.size() <= 200
+        && data.displayName is string && data.displayName.size() <= 150
+        && data.photoUrl is string && data.photoUrl.size() <= 500
+        && data.status in ['waiting', 'approved', 'blocked']
+        && data.role in ['admin', 'user']
+        && data.waitingNote is string && data.waitingNote.size() <= 300
+        && data.firstLoginAt is string && data.firstLoginAt.size() <= 60
+        && data.lastLoginAt is string && data.lastLoginAt.size() <= 60
+        && data.loginCount is int && data.loginCount >= 1 && data.loginCount <= 1000000
+        && data.accessStartDate is string && data.accessStartDate.size() <= 30
+        && data.accessExpiresAt is string && data.accessExpiresAt.size() <= 30
+        && data.approvedBy is string && data.approvedBy.size() <= 200
+        && data.approvedAt is string && data.approvedAt.size() <= 60
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminSpreadsheetConfig(data, settingId) {
+      return data.keys().hasAll([
+          'id', 'spreadsheetUrl', 'appsScriptWebhookUrl',
+          'autoPushEnabled', 'lastSyncedAt', 'lastPushedCount', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'spreadsheetUrl', 'appsScriptWebhookUrl',
+          'autoPushEnabled', 'lastSyncedAt', 'lastPushedCount', 'updatedAt'
+        ])
+        && data.id is string && data.id == settingId && data.id.size() >= 1 && data.id.size() <= 128
+        && data.spreadsheetUrl is string && data.spreadsheetUrl.size() <= 500
+        && data.appsScriptWebhookUrl is string && data.appsScriptWebhookUrl.size() <= 500
+        && data.autoPushEnabled is bool
+        && data.lastSyncedAt is string && data.lastSyncedAt.size() <= 60
+        && data.lastPushedCount is int && data.lastPushedCount >= 0 && data.lastPushedCount <= 1000000
+        && data.updatedAt is timestamp;
+    }
+
     // --- Collection Rules ---
+
+    match /userAccess/{userId} {
+      allow get: if (isOwner(userId) || isAdmin()) && isValidId(userId);
+      allow list: if isAdmin();
+
+      allow create: if isSignedIn()
+        && isValidId(userId)
+        && isValidUserAccessRecord(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          (
+            isOwner(userId)
+            && !isAdmin()
+            && incoming().status == 'waiting'
+            && incoming().role == 'user'
+            && incoming().accessStartDate == ''
+            && incoming().accessExpiresAt == ''
+            && incoming().approvedBy == ''
+            && incoming().approvedAt == ''
+            && incoming().loginCount == 1
+          )
+          || (
+            isAdmin()
+            && isOwner(userId)
+            && incoming().role == 'admin'
+            && incoming().status == 'approved'
+          )
+        );
+
+      allow update: if isSignedIn()
+        && isValidId(userId)
+        && isValidUserAccessRecord(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().email == existing().email
+        && incoming().role == existing().role
+        && incoming().firstLoginAt == existing().firstLoginAt
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (
+            isAdmin()
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'accessStartDate', 'accessExpiresAt', 'waitingNote',
+              'approvedBy', 'approvedAt', 'displayName', 'photoUrl',
+              'lastLoginAt', 'loginCount', 'updatedAt'
+            ])
+          )
+          || (
+            isOwner(userId)
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'photoUrl', 'lastLoginAt', 'loginCount', 'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if isAdmin() && isValidId(userId) && existing().role != 'admin';
+    }
+
+    match /adminSettings/{settingId} {
+      allow get: if isAdmin() && isValidId(settingId);
+      allow list: if false;
+
+      allow create: if isAdmin()
+        && isValidId(settingId)
+        && isValidAdminSpreadsheetConfig(incoming(), settingId)
+        && incoming().updatedAt == request.time;
+
+      allow update: if isAdmin()
+        && isValidId(settingId)
+        && isValidAdminSpreadsheetConfig(incoming(), settingId)
+        && incoming().id == existing().id
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'spreadsheetUrl', 'appsScriptWebhookUrl', 'autoPushEnabled',
+          'lastSyncedAt', 'lastPushedCount', 'updatedAt'
+        ]);
+
+      allow delete: if isAdmin() && isValidId(settingId);
+    }
 
     match /users/{userId} {
       allow get: if isOwner(userId) && isValidId(userId);

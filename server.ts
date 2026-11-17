@@ -233,6 +233,82 @@ async function startServer() {
     }
   });
 
+  app.post('/api/push-admin-sheet', async (req, res) => {
+    try {
+      const { webhookUrl, payload } = req.body as {
+        webhookUrl?: string;
+        payload?: unknown;
+      };
+
+      if (!webhookUrl || typeof webhookUrl !== 'string') {
+        return res.status(400).json({ error: 'URL Google Apps Script Web App belum diisi.' });
+      }
+
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(webhookUrl.trim());
+      } catch {
+        return res.status(400).json({ error: 'Format URL Apps Script Web App tidak valid.' });
+      }
+
+      if (parsedUrl.protocol !== 'https:') {
+        return res.status(400).json({ error: 'URL Apps Script harus menggunakan protokol https://' });
+      }
+
+      const host = parsedUrl.hostname.toLowerCase();
+      const isGoogleScriptHost =
+        host === 'script.google.com' ||
+        host.endsWith('.script.google.com') ||
+        host === 'script.googleusercontent.com' ||
+        host.endsWith('.googleusercontent.com');
+
+      if (!isGoogleScriptHost) {
+        return res.status(400).json({
+          error:
+            'Demi keamanan, URL webhook harus berasal dari domain resmi Google Apps Script (script.google.com).',
+        });
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      try {
+        const response = await fetch(parsedUrl.toString(), {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'SPPG-Admin-Sync/1.0',
+          },
+          body: JSON.stringify(payload ?? {}),
+        });
+        clearTimeout(timeout);
+
+        const responseText = await response.text();
+        if (!response.ok) {
+          return res.status(422).json({
+            error: `Google Apps Script mengembalikan HTTP ${response.status}: ${responseText.slice(0, 200)}`,
+          });
+        }
+
+        return res.json({
+          ok: true,
+          responsePreview: responseText.slice(0, 300),
+        });
+      } catch (err) {
+        clearTimeout(timeout);
+        throw err;
+      }
+    } catch (error) {
+      console.error('Push admin sheet error:', error);
+      return res.status(500).json({
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Gagal mengirim database pengguna ke Google Sheets.',
+      });
+    }
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({

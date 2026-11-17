@@ -382,7 +382,8 @@ export type WorkspaceTab =
   | 'makanan'
   | 'kalender'
   | 'arsip'
-  | 'identitas';
+  | 'identitas'
+  | 'admin_panel';
 
 // --- TKPI 2020 & Spreadsheet Sync ---
 
@@ -633,4 +634,37 @@ export interface MasterMenuPlan {
   updatedAt?: unknown;
 }
 
+// --- Kontrol Akses Pengguna & Panel Admin Odhe Gizi ---
+
+export type UserAccessStatus = 'waiting' | 'approved' | 'blocked';
+export type UserAccessRole = 'admin' | 'user';
+
+export interface UserAccessRecord {
+  uid: string;
+  email: string;
+  displayName: string;
+  photoUrl: string;
+  status: UserAccessStatus;
+  role: UserAccessRole;
+  waitingNote: string;
+  firstLoginAt: string;
+  lastLoginAt: string;
+  loginCount: number;
+  accessStartDate: string;
+  accessExpiresAt: string;
+  approvedBy: string;
+  approvedAt: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface AdminSpreadsheetConfig {
+  id: string;
+  spreadsheetUrl: string;
+  appsScriptWebhookUrl: string;
+  autoPushEnabled: boolean;
+  lastSyncedAt: string;
+  lastPushedCount: number;
+  updatedAt?: unknown;
+}
 

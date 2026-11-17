@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, ImagePlus, Link2, Save, Sparkles } from 'lucide-react';
 import type { LogoDocumentKey, SppgLogoSettings, SppgUserProfile } from '../types';
 import {
@@ -6,9 +6,16 @@ import {
   LOGO_DOCUMENT_META,
   normalizeLogoSettings,
 } from '../utils/logoResolver';
+import { useAutoSave } from '../hooks/useAutoSave';
+import {
+  clearScopedDraftBackup,
+  loadScopedDraftBackup,
+} from '../utils/sessionStorage';
+import { AutoSaveIndicator } from './AutoSaveIndicator';
 import { LogoUploadModal } from './LogoUploadModal';
 
 interface SppgProfileFormProps {
+  uid?: string;
   profile: SppgUserProfile;
   isFirstTime?: boolean;
   onSave: (
@@ -17,6 +24,7 @@ interface SppgProfileFormProps {
 }
 
 export const SppgProfileForm: React.FC<SppgProfileFormProps> = ({
+  uid,
   profile,
   isFirstTime = false,
   onSave,
@@ -32,22 +40,112 @@ export const SppgProfileForm: React.FC<SppgProfileFormProps> = ({
   const [logoSettings, setLogoSettings] = useState<SppgLogoSettings>(() =>
     normalizeLogoSettings(profile.logoSettings)
   );
+  const effectiveUid = uid || profile.uid;
+  const serverPayload = useMemo(
+    () => ({
+      reportTitle: profile.reportTitle || 'REKAPAN MENU SMP',
+      namaSppg: profile.namaSppg || '',
+      idSppg: profile.idSppg || '',
+      alamat: profile.alamat || '',
+      kabKota: profile.kabKota || '',
+      provinsi: profile.provinsi || '',
+      namaSppi: profile.namaSppi || '',
+      nomorHp: profile.nomorHp || '',
+      logoSettings: normalizeLogoSettings(profile.logoSettings),
+    }),
+    [profile]
+  );
+  const serverHash = useMemo(() => JSON.stringify(serverPayload), [serverPayload]);
+
   const [logoModalSide, setLogoModalSide] = useState<'left' | 'right' | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const currentPayload = useMemo(
+    () => ({
+      reportTitle,
+      namaSppg,
+      idSppg,
+      alamat,
+      kabKota,
+      provinsi,
+      namaSppi,
+      nomorHp,
+      logoSettings,
+    }),
+    [reportTitle, namaSppg, idSppg, alamat, kabKota, provinsi, namaSppi, nomorHp, logoSettings]
+  );
+
+  const lastServerHashRef = useRef<string>(serverHash);
+  const lastUidRef = useRef<string>(effectiveUid);
+  const currentHashRef = useRef<string>(JSON.stringify(currentPayload));
+  currentHashRef.current = JSON.stringify(currentPayload);
+
+  // Restore emergency draft if user closed app before sync finished
   useEffect(() => {
-    setReportTitle(profile.reportTitle || 'REKAPAN MENU SMP');
-    setNamaSppg(profile.namaSppg || '');
-    setIdSppg(profile.idSppg || '');
-    setAlamat(profile.alamat || '');
-    setKabKota(profile.kabKota || '');
-    setProvinsi(profile.provinsi || '');
-    setNamaSppi(profile.namaSppi || '');
-    setNomorHp(profile.nomorHp || '');
-    setLogoSettings(normalizeLogoSettings(profile.logoSettings));
-  }, [profile]);
+    const recovered = loadScopedDraftBackup<typeof serverPayload>(
+      effectiveUid,
+      'sppg_profile'
+    );
+    if (recovered && JSON.stringify(recovered) !== serverHash) {
+      setReportTitle(recovered.reportTitle || 'REKAPAN MENU SMP');
+      setNamaSppg(recovered.namaSppg || '');
+      setIdSppg(recovered.idSppg || '');
+      setAlamat(recovered.alamat || '');
+      setKabKota(recovered.kabKota || '');
+      setProvinsi(recovered.provinsi || '');
+      setNamaSppi(recovered.namaSppi || '');
+      setNomorHp(recovered.nomorHp || '');
+      setLogoSettings(normalizeLogoSettings(recovered.logoSettings));
+    }
+    // Only on uid change / initial mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveUid]);
+
+  useEffect(() => {
+    const uidChanged = lastUidRef.current !== effectiveUid;
+    const isClean = currentHashRef.current === lastServerHashRef.current;
+    if (uidChanged || isClean) {
+      setReportTitle(serverPayload.reportTitle);
+      setNamaSppg(serverPayload.namaSppg);
+      setIdSppg(serverPayload.idSppg);
+      setAlamat(serverPayload.alamat);
+      setKabKota(serverPayload.kabKota);
+      setProvinsi(serverPayload.provinsi);
+      setNamaSppi(serverPayload.namaSppi);
+      setNomorHp(serverPayload.nomorHp);
+      setLogoSettings(serverPayload.logoSettings);
+    }
+    lastUidRef.current = effectiveUid;
+    lastServerHashRef.current = serverHash;
+  }, [effectiveUid, serverHash, serverPayload]);
+
+  const {
+    status: autoSaveStatus,
+    lastSavedAtLabel,
+    errorMessage: autoSaveError,
+    markSynced,
+  } = useAutoSave({
+    value: currentPayload,
+    serverHash,
+    scopeKey: 'sppg_profile',
+    uid: effectiveUid,
+    enabled: Boolean(namaSppg.trim() && idSppg.trim()),
+    onSave: async (val) => {
+      await onSave({
+        reportTitle: val.reportTitle.trim() || 'REKAPAN MENU SMP',
+        namaSppg: val.namaSppg.trim(),
+        idSppg: val.idSppg.trim(),
+        alamat: val.alamat.trim(),
+        kabKota: val.kabKota.trim(),
+        provinsi: val.provinsi.trim(),
+        namaSppi: val.namaSppi.trim(),
+        nomorHp: val.nomorHp.trim(),
+        logoSettings: normalizeLogoSettings(val.logoSettings),
+      });
+    },
+  });
 
   const handleApplyTemplate = () => {
     setReportTitle('REKAPAN MENU SMP');
@@ -98,7 +196,7 @@ export const SppgProfileForm: React.FC<SppgProfileFormProps> = ({
 
     setSaving(true);
     try {
-      await onSave({
+      const payloadToSave = {
         reportTitle: reportTitle.trim() || 'REKAPAN MENU SMP',
         namaSppg: namaSppg.trim(),
         idSppg: idSppg.trim(),
@@ -107,8 +205,11 @@ export const SppgProfileForm: React.FC<SppgProfileFormProps> = ({
         provinsi: provinsi.trim(),
         namaSppi: namaSppi.trim(),
         nomorHp: nomorHp.trim(),
-        logoSettings,
-      });
+        logoSettings: normalizeLogoSettings(logoSettings),
+      };
+      await onSave(payloadToSave);
+      markSynced(JSON.stringify(payloadToSave));
+      clearScopedDraftBackup(effectiveUid, 'sppg_profile');
       setSavedNotice(true);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Gagal menyimpan identitas SPPG.');
@@ -130,14 +231,21 @@ export const SppgProfileForm: React.FC<SppgProfileFormProps> = ({
             Data SPPG dan konfigurasi Logo Kiri (BGN) serta Logo Kanan otomatis mengisi seluruh formulir dan ekspor PDF F4 sesuai dokumen yang Anda pilih.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleApplyTemplate}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 shrink-0"
-        >
-          <Sparkles className="h-3.5 w-3.5 text-emerald-600" />
-          Isi Contoh Format
-        </button>
+        <div className="flex flex-wrap items-center gap-3 shrink-0">
+          <AutoSaveIndicator
+            status={autoSaveStatus}
+            lastSavedAtLabel={lastSavedAtLabel}
+            errorMessage={autoSaveError}
+          />
+          <button
+            type="button"
+            onClick={handleApplyTemplate}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 shrink-0"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-emerald-600" />
+            Isi Contoh Format
+          </button>
+        </div>
       </div>
 
       <form onSubmit={handleSubmit} className="p-6 space-y-6">

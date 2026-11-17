@@ -51,6 +51,12 @@ import {
   formatMasterMenuDayAsMenuString,
 } from '../utils/masterMenuHelper';
 import { mergeTkpiCatalog } from '../utils/tkpiCsvParser';
+import { useAutoSave } from '../hooks/useAutoSave';
+import {
+  clearScopedDraftBackup,
+  loadScopedDraftBackup,
+} from '../utils/sessionStorage';
+import { AutoSaveIndicator } from './AutoSaveIndicator';
 import { LogoUploadModal } from './LogoUploadModal';
 
 interface FoodCostNutritionViewProps {
@@ -144,30 +150,87 @@ export const FoodCostNutritionView: React.FC<FoodCostNutritionViewProps> = ({
     [foodCostPlans, activeDateIso]
   );
 
-  const [draft, setDraft] = useState<FoodCostDayPlan>(() =>
-    existingPlan ||
-    getDefaultFoodCostDayPlan(uid, monthKey, activeDateIso, matchedEntry?.hariKe || 1, profile)
+  const serverBase = useMemo(
+    () =>
+      existingPlan ||
+      getDefaultFoodCostDayPlan(
+        uid,
+        monthKey,
+        activeDateIso,
+        matchedEntry?.hariKe || 1,
+        profile
+      ),
+    [existingPlan, uid, monthKey, activeDateIso, matchedEntry?.hariKe, profile]
   );
+
+  const serializePlan = (p: FoodCostDayPlan): string =>
+    JSON.stringify({
+      dateIso: p.dateIso,
+      hariKe: p.hariKe,
+      headerLine1: p.headerLine1,
+      headerLine2: p.headerLine2,
+      headerLine3: p.headerLine3,
+      headerAlamat: p.headerAlamat,
+      logoDataUrl: p.logoDataUrl,
+      logoWidthPx: p.logoWidthPx,
+      logoRightDataUrl: p.logoRightDataUrl,
+      logoRightWidthPx: p.logoRightWidthPx,
+      followGlobalLeftLogo: p.followGlobalLeftLogo,
+      followGlobalRightLogo: p.followGlobalRightLogo,
+      worksheets: p.worksheets,
+    });
+
+  const serverHash = useMemo(() => serializePlan(serverBase), [serverBase]);
+  const scopeKey = `foodcost:${monthKey}:${activeDateIso}`;
+  const sheetStorageKey = `sppg_fc_sheet_v1:${uid}:${monthKey}:${activeDateIso}`;
+
+  const [draft, setDraft] = useState<FoodCostDayPlan>(() => {
+    const recovered = loadScopedDraftBackup<FoodCostDayPlan>(uid, scopeKey);
+    return recovered || serverBase;
+  });
+
+  const lastScopeRef = useRef<string>(scopeKey);
+  const lastServerHashRef = useRef<string>(serverHash);
+  const currentDraftRef = useRef<FoodCostDayPlan>(draft);
+  currentDraftRef.current = draft;
+
+  const [activeSheetId, setActiveSheetId] = useState<string>(() => {
+    try {
+      const saved = window.localStorage.getItem(sheetStorageKey);
+      if (saved) return saved;
+    } catch {
+      // Ignore storage error
+    }
+    return draft.worksheets[0]?.id || '';
+  });
 
   useEffect(() => {
-    if (existingPlan) {
-      setDraft(existingPlan);
-    } else {
-      setDraft(
-        getDefaultFoodCostDayPlan(
-          uid,
-          monthKey,
-          activeDateIso,
-          matchedEntry?.hariKe || 1,
-          profile
-        )
-      );
+    const scopeChanged = lastScopeRef.current !== scopeKey;
+    if (scopeChanged) {
+      lastScopeRef.current = scopeKey;
+      const recovered = loadScopedDraftBackup<FoodCostDayPlan>(uid, scopeKey);
+      const nextPlan = recovered || serverBase;
+      setDraft(nextPlan);
+      lastServerHashRef.current = serverHash;
+      try {
+        const savedSheet = window.localStorage.getItem(sheetStorageKey);
+        if (savedSheet && nextPlan.worksheets.some((w) => w.id === savedSheet)) {
+          setActiveSheetId(savedSheet);
+        } else {
+          setActiveSheetId(nextPlan.worksheets[0]?.id || '');
+        }
+      } catch {
+        setActiveSheetId(nextPlan.worksheets[0]?.id || '');
+      }
+      return;
     }
-  }, [existingPlan, uid, monthKey, activeDateIso, matchedEntry?.hariKe, profile]);
 
-  const [activeSheetId, setActiveSheetId] = useState<string>(
-    () => draft.worksheets[0]?.id || ''
-  );
+    const isClean = serializePlan(currentDraftRef.current) === lastServerHashRef.current;
+    if (isClean) {
+      setDraft(serverBase);
+    }
+    lastServerHashRef.current = serverHash;
+  }, [scopeKey, uid, serverBase, serverHash, sheetStorageKey]);
 
   const activeWorksheet = useMemo(() => {
     return draft.worksheets.find((w) => w.id === activeSheetId) || draft.worksheets[0] || null;
@@ -178,6 +241,45 @@ export const FoodCostNutritionView: React.FC<FoodCostNutritionViewProps> = ({
       setActiveSheetId(activeWorksheet.id);
     }
   }, [activeWorksheet, activeSheetId]);
+
+  useEffect(() => {
+    if (!activeSheetId) return;
+    try {
+      window.localStorage.setItem(sheetStorageKey, activeSheetId);
+    } catch {
+      // Ignore storage error
+    }
+  }, [sheetStorageKey, activeSheetId]);
+
+  const {
+    status: autoSaveStatus,
+    lastSavedAtLabel,
+    errorMessage: autoSaveError,
+    markSynced,
+  } = useAutoSave<FoodCostDayPlan>({
+    value: draft,
+    serverHash,
+    scopeKey,
+    uid,
+    serialize: serializePlan,
+    onSave: async (val) => {
+      await onSaveDayPlan({
+        dateIso: val.dateIso,
+        hariKe: val.hariKe,
+        headerLine1: val.headerLine1,
+        headerLine2: val.headerLine2,
+        headerLine3: val.headerLine3,
+        headerAlamat: val.headerAlamat,
+        logoDataUrl: val.logoDataUrl,
+        logoWidthPx: val.logoWidthPx,
+        logoRightDataUrl: val.logoRightDataUrl,
+        logoRightWidthPx: val.logoRightWidthPx,
+        followGlobalLeftLogo: val.followGlobalLeftLogo,
+        followGlobalRightLogo: val.followGlobalRightLogo,
+        worksheets: val.worksheets,
+      });
+    },
+  });
 
   const tkpiCatalog = useMemo(
     () =>
@@ -263,6 +365,8 @@ export const FoodCostNutritionView: React.FC<FoodCostNutritionViewProps> = ({
         followGlobalRightLogo: next.followGlobalRightLogo,
         worksheets: next.worksheets,
       });
+      markSynced(serializePlan(next));
+      clearScopedDraftBackup(uid, scopeKey);
     } finally {
       setSaving(false);
     }
@@ -560,6 +664,11 @@ export const FoodCostNutritionView: React.FC<FoodCostNutritionViewProps> = ({
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <AutoSaveIndicator
+              status={autoSaveStatus}
+              lastSavedAtLabel={lastSavedAtLabel}
+              errorMessage={autoSaveError}
+            />
             <button
               type="button"
               onClick={onOpenTkpiModal}

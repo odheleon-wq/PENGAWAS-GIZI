@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import {
   Activity,
   Archive,
@@ -14,8 +15,10 @@ import {
   FileSpreadsheet,
   LayoutDashboard,
   ListOrdered,
+  LogOut,
   Menu,
   PackageCheck,
+  ShieldCheck,
   ShoppingCart,
   Snowflake,
   Thermometer,
@@ -23,6 +26,7 @@ import {
   Utensils,
   X,
 } from 'lucide-react';
+import { auth, googleProvider } from './firebase';
 import {
   createFreezerMachine,
   createTempRoom,
@@ -40,10 +44,10 @@ import {
   getDefaultFoodTempFormConfig,
   getDefaultFreezerFormConfig,
   getDefaultMasterMenuPlan,
+  getDefaultProfileDraft,
   getDefaultRawMaterialRecapDayConfig,
   getDefaultSampleFormConfig,
   getDefaultTempFormConfig,
-  LOCAL_WORKSPACE_UID,
   renumberMonthEntriesChronologically,
   saveFoodTempFormConfig,
   saveFreezerFormConfig,
@@ -86,7 +90,26 @@ import {
   upsertTempDayReading,
 } from './services/sppgService';
 import { getInitialDirectProfile } from './services/localSppgStore';
+import {
+  deleteUserAccessRecord,
+  formatShortDateId,
+  getEffectiveAccessState,
+  isAdminEmail,
+  pushAdminDatabaseToSheet,
+  recordUserLoginAttempt,
+  saveAdminSpreadsheetConfig,
+  subscribeAdminSpreadsheetConfig,
+  subscribeAllUserAccess,
+  subscribeMyAccessRecord,
+  updateUserAccessByAdmin,
+} from './services/adminAccessService';
+import {
+  loadUserSessionState,
+  saveUserSessionState,
+  type UserSessionResumeState,
+} from './utils/sessionStorage';
 import type {
+  AdminSpreadsheetConfig,
   AkgTargetsConfig,
   DailyMenuEntry,
   DailyPmRecord,
@@ -113,6 +136,7 @@ import type {
   TempFormConfig,
   TempMonitoringRoom,
   TkpiSyncConfig,
+  UserAccessRecord,
   WorkspaceTab,
 } from './types';
 import {
@@ -165,9 +189,23 @@ import { UpdatePmView } from './components/UpdatePmView';
 import { FoodCostNutritionView } from './components/FoodCostNutritionView';
 import { RekapBahanBakuPoView } from './components/RekapBahanBakuPoView';
 import { TkpiSyncModal } from './components/TkpiSyncModal';
+import { LoginScreen } from './components/LoginScreen';
+import { WaitingApprovalScreen } from './components/WaitingApprovalScreen';
+import { AdminPanelView } from './components/AdminPanelView';
 
 export default function App() {
-  const workspaceUid = LOCAL_WORKSPACE_UID;
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [accessRecord, setAccessRecord] = useState<UserAccessRecord | null>(null);
+  const [accessLoading, setAccessLoading] = useState(true);
+
+  const [allUsers, setAllUsers] = useState<UserAccessRecord[]>([]);
+  const [allUsersLoading, setAllUsersLoading] = useState(false);
+  const [adminSpreadsheetConfig, setAdminSpreadsheetConfig] =
+    useState<AdminSpreadsheetConfig | null>(null);
+
+  const isAdmin = Boolean(authUser && isAdminEmail(authUser.email));
+  const workspaceUid = authUser?.uid || '';
 
   const [profile, setProfile] = useState<SppgUserProfile>(() => getInitialDirectProfile());
 
@@ -225,6 +263,201 @@ export default function App() {
   const [activeWorkDateIso, setActiveWorkDateIso] = useState<string>(() => getTodayIso());
 
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
+  const sessionHydratedUidRef = useRef<string | null>(null);
+  const prevMonthKeyRef = useRef<string | null>(null);
+  const lastAutoPushedSigRef = useRef<string | null>(null);
+
+  const effectiveAccessState = useMemo(() => {
+    if (isAdmin) return 'approved' as const;
+    if (!accessRecord) return 'waiting' as const;
+    return getEffectiveAccessState(accessRecord);
+  }, [isAdmin, accessRecord]);
+
+  const isAccessGranted = Boolean(
+    authUser && (isAdmin || (!accessLoading && effectiveAccessState === 'approved'))
+  );
+
+  // 0. Firebase Authentication & Waiting-List Access Listener
+  useEffect(() => {
+    let unsubAccess: (() => void) | null = null;
+
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      if (unsubAccess) {
+        unsubAccess();
+        unsubAccess = null;
+      }
+
+      setAuthUser(user);
+      setAuthLoading(false);
+
+      if (!user) {
+        setAccessRecord(null);
+        setAccessLoading(false);
+        setAllUsers([]);
+        setAdminSpreadsheetConfig(null);
+        sessionHydratedUidRef.current = null;
+        prevMonthKeyRef.current = null;
+        lastAutoPushedSigRef.current = null;
+        return;
+      }
+
+      const userIsAdmin = isAdminEmail(user.email);
+
+      // Hydrate last session position for this personal email once per sign-in
+      if (sessionHydratedUidRef.current !== user.uid) {
+        const saved = loadUserSessionState(user.uid, userIsAdmin);
+        if (saved) {
+          if (saved.activeMonthKey && /^\d{4}-\d{2}$/.test(saved.activeMonthKey)) {
+            setActiveMonthKey(saved.activeMonthKey);
+            prevMonthKeyRef.current = saved.activeMonthKey;
+          }
+          if (saved.activeWorkDateIso && /^\d{4}-\d{2}-\d{2}$/.test(saved.activeWorkDateIso)) {
+            setActiveWorkDateIso(saved.activeWorkDateIso);
+          }
+          if (saved.activeTab) {
+            setActiveTab(saved.activeTab);
+          }
+          if (saved.activeTempRoomId !== undefined) {
+            setActiveTempRoomId(saved.activeTempRoomId || null);
+          }
+          if (saved.activeFreezerMachineId !== undefined) {
+            setActiveFreezerMachineId(saved.activeFreezerMachineId || null);
+          }
+          if (saved.pdfOrientation === 'portrait' || saved.pdfOrientation === 'landscape') {
+            setPdfOrientation(saved.pdfOrientation);
+          }
+          if (typeof saved.includeYearInPeriod === 'boolean') {
+            setIncludeYearInPeriod(saved.includeYearInPeriod);
+          }
+        }
+        try {
+          const savedRows = window.localStorage.getItem(`sppg_min_sample_rows_v1:${user.uid}`);
+          if (savedRows) {
+            const parsedRows = Number(savedRows);
+            if (Number.isFinite(parsedRows) && parsedRows >= 1 && parsedRows <= 50) {
+              setMinSamplePrintableRows(parsedRows);
+            }
+          }
+        } catch {
+          // Ignore storage read errors
+        }
+        sessionHydratedUidRef.current = user.uid;
+      }
+
+      // Initialize fallback profile identity for the signed-in email
+      setProfile((prev) => {
+        if (prev.uid === user.uid) return prev;
+        return {
+          ...getDefaultProfileDraft(user.uid, user.email || ''),
+          namaSppi: user.displayName || '',
+        };
+      });
+
+      setAccessLoading(true);
+      void recordUserLoginAttempt(user).catch((err) => {
+        setErrorBanner(err instanceof Error ? err.message : String(err));
+      });
+
+      unsubAccess = subscribeMyAccessRecord(
+        user.uid,
+        (rec) => {
+          setAccessRecord(rec);
+          setAccessLoading(false);
+        },
+        (err) => {
+          setErrorBanner(err.message);
+          setAccessLoading(false);
+        }
+      );
+    });
+
+    return () => {
+      if (unsubAccess) unsubAccess();
+      unsubAuth();
+    };
+  }, []);
+
+  // Guard non-admin away from admin_panel
+  useEffect(() => {
+    if (!isAdmin && activeTab === 'admin_panel') {
+      setActiveTab('dashboard');
+    }
+  }, [isAdmin, activeTab]);
+
+  // Persist session position automatically so exiting and reopening resumes right where user left off
+  useEffect(() => {
+    if (!authUser?.uid || sessionHydratedUidRef.current !== authUser.uid) return;
+    const state: UserSessionResumeState = {
+      activeTab: !isAdmin && activeTab === 'admin_panel' ? 'dashboard' : activeTab,
+      activeMonthKey,
+      activeWorkDateIso,
+      activeTempRoomId,
+      activeFreezerMachineId,
+      pdfOrientation,
+      includeYearInPeriod,
+      updatedAtIso: new Date().toISOString(),
+    };
+    saveUserSessionState(authUser.uid, state);
+  }, [
+    authUser?.uid,
+    isAdmin,
+    activeTab,
+    activeMonthKey,
+    activeWorkDateIso,
+    activeTempRoomId,
+    activeFreezerMachineId,
+    pdfOrientation,
+    includeYearInPeriod,
+  ]);
+
+  useEffect(() => {
+    if (!authUser?.uid || sessionHydratedUidRef.current !== authUser.uid) return;
+    try {
+      window.localStorage.setItem(
+        `sppg_min_sample_rows_v1:${authUser.uid}`,
+        String(minSamplePrintableRows)
+      );
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [authUser?.uid, minSamplePrintableRows]);
+
+  // Flush session state immediately on hide / close
+  useEffect(() => {
+    if (!authUser?.uid) return;
+    const flushSession = () => {
+      if (sessionHydratedUidRef.current !== authUser.uid) return;
+      saveUserSessionState(authUser.uid, {
+        activeTab: !isAdmin && activeTab === 'admin_panel' ? 'dashboard' : activeTab,
+        activeMonthKey,
+        activeWorkDateIso,
+        activeTempRoomId,
+        activeFreezerMachineId,
+        pdfOrientation,
+        includeYearInPeriod,
+        updatedAtIso: new Date().toISOString(),
+      });
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') flushSession();
+    };
+    window.addEventListener('pagehide', flushSession);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flushSession);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [
+    authUser?.uid,
+    isAdmin,
+    activeTab,
+    activeMonthKey,
+    activeWorkDateIso,
+    activeTempRoomId,
+    activeFreezerMachineId,
+    pdfOrientation,
+    includeYearInPeriod,
+  ]);
 
   // Keep shared daily work date inside activeMonthKey when month changes
   useEffect(() => {
@@ -238,8 +471,64 @@ export default function App() {
     }
   }, [activeMonthKey, activeWorkDateIso]);
 
-  // 1. Profile, Monthly Archive & TKPI Config Subscriptions (direct without login gate)
+  // 0b. Admin Odhe Gizi Subscriptions (all detected users + spreadsheet config)
   useEffect(() => {
+    if (!authUser || !isAdmin) {
+      setAllUsers([]);
+      setAdminSpreadsheetConfig(null);
+      return;
+    }
+    setAllUsersLoading(true);
+    const unsubUsers = subscribeAllUserAccess(
+      (list) => {
+        setAllUsers(list);
+        setAllUsersLoading(false);
+      },
+      (err) => {
+        setErrorBanner(err.message);
+        setAllUsersLoading(false);
+      }
+    );
+    const unsubSheet = subscribeAdminSpreadsheetConfig(
+      (cfg) => setAdminSpreadsheetConfig(cfg),
+      (err) => setErrorBanner(err.message)
+    );
+    return () => {
+      unsubUsers();
+      unsubSheet();
+    };
+  }, [authUser, isAdmin]);
+
+  // Optional automatic push to Admin Spreadsheet when user login / ACC updates occur
+  useEffect(() => {
+    if (!isAdmin || !adminSpreadsheetConfig?.autoPushEnabled) return;
+    const url = (adminSpreadsheetConfig.appsScriptWebhookUrl || '').trim();
+    if (!url.startsWith('https://') || allUsers.length === 0) return;
+
+    const sig = `${allUsers.length}:${allUsers
+      .map((u) => `${u.uid}:${u.status}:${u.accessStartDate}:${u.accessExpiresAt}:${u.lastLoginAt}`)
+      .join('|')}`;
+
+    if (lastAutoPushedSigRef.current === null) {
+      lastAutoPushedSigRef.current = sig;
+      return;
+    }
+    if (lastAutoPushedSigRef.current === sig) return;
+    lastAutoPushedSigRef.current = sig;
+
+    void pushAdminDatabaseToSheet(url, allUsers).catch(() => {
+      // Non-blocking background sync
+    });
+  }, [
+    isAdmin,
+    allUsers,
+    adminSpreadsheetConfig?.autoPushEnabled,
+    adminSpreadsheetConfig?.appsScriptWebhookUrl,
+  ]);
+
+  // 1. Profile, Monthly Archive & TKPI Config Subscriptions (only after login & ACC)
+  useEffect(() => {
+    if (!isAccessGranted || !workspaceUid || !authUser) return;
     setErrorBanner(null);
 
     const unsubProfile = subscribeUserProfile(
@@ -247,6 +536,11 @@ export default function App() {
       (loadedProfile) => {
         if (loadedProfile) {
           setProfile(loadedProfile);
+        } else {
+          setProfile({
+            ...getDefaultProfileDraft(workspaceUid, authUser.email || ''),
+            namaSppi: authUser.displayName || '',
+          });
         }
       },
       (err) => {
@@ -271,16 +565,23 @@ export default function App() {
       unsubArchives();
       unsubTkpi();
     };
-  }, [workspaceUid]);
+  }, [isAccessGranted, workspaceUid, authUser]);
 
   // 2. Active Month Entries, Sample Pertinggal, Temperature Monitoring & Freezer/Chiller Subscriptions
   useEffect(() => {
+    if (!isAccessGranted || !workspaceUid) return;
+    const monthChanged =
+      prevMonthKeyRef.current !== null && prevMonthKeyRef.current !== activeMonthKey;
+    prevMonthKeyRef.current = activeMonthKey;
+
     setEntriesLoading(true);
     setTempRoomsLoaded(false);
-    setActiveTempRoomId(null);
     setFreezerMachinesLoaded(false);
-    setActiveFreezerMachineId(null);
     setFoodTempBlocksLoaded(false);
+    if (monthChanged) {
+      setActiveTempRoomId(null);
+      setActiveFreezerMachineId(null);
+    }
 
     const unsubEntries = subscribeMonthEntries(
       workspaceUid,
@@ -412,7 +713,7 @@ export default function App() {
       unsubMasterMenus();
       unsubPoRecaps();
     };
-  }, [workspaceUid, activeMonthKey]);
+  }, [isAccessGranted, workspaceUid, activeMonthKey]);
 
   const effectiveTempRoomId = useMemo(() => {
     if (activeTempRoomId && tempRooms.some((r) => r.id === activeTempRoomId)) {
@@ -423,7 +724,7 @@ export default function App() {
 
   // 3. Active Room Daily Temperature Readings Subscription
   useEffect(() => {
-    if (!effectiveTempRoomId) {
+    if (!isAccessGranted || !workspaceUid || !effectiveTempRoomId) {
       setTempDayReadings([]);
       return;
     }
@@ -435,7 +736,7 @@ export default function App() {
       (err) => setErrorBanner(err.message)
     );
     return () => unsubDays();
-  }, [workspaceUid, activeMonthKey, effectiveTempRoomId]);
+  }, [isAccessGranted, workspaceUid, activeMonthKey, effectiveTempRoomId]);
 
   const effectiveFreezerMachineId = useMemo(() => {
     if (activeFreezerMachineId && freezerMachines.some((m) => m.id === activeFreezerMachineId)) {
@@ -446,7 +747,7 @@ export default function App() {
 
   // 4. Active Freezer/Chiller Machine Log Rows Subscription
   useEffect(() => {
-    if (!effectiveFreezerMachineId) {
+    if (!isAccessGranted || !workspaceUid || !effectiveFreezerMachineId) {
       setFreezerLogRows([]);
       return;
     }
@@ -458,7 +759,7 @@ export default function App() {
       (err) => setErrorBanner(err.message)
     );
     return () => unsubRows();
-  }, [workspaceUid, activeMonthKey, effectiveFreezerMachineId]);
+  }, [isAccessGranted, workspaceUid, activeMonthKey, effectiveFreezerMachineId]);
 
   const suggestedHariKe = useMemo(() => {
     if (entries.length === 0) return 1;
@@ -511,7 +812,7 @@ export default function App() {
   const handleSaveProfile = async (
     data: Omit<SppgUserProfile, 'uid' | 'email' | 'createdAt' | 'updatedAt'>
   ) => {
-    await saveUserProfile(workspaceUid, profile.email, data);
+    await saveUserProfile(workspaceUid, authUser?.email || profile.email, data);
   };
 
   const handleSaveEntry = async (payload: {
@@ -1064,7 +1365,17 @@ export default function App() {
     });
   };
 
-  const navItems: Array<{ id: WorkspaceTab; label: string; icon: React.ReactNode }> = [
+  const waitingUsersCount = useMemo(
+    () => allUsers.filter((u) => getEffectiveAccessState(u) === 'waiting').length,
+    [allUsers]
+  );
+
+  const navItems: Array<{
+    id: WorkspaceTab;
+    label: string;
+    icon: React.ReactNode;
+    badge?: number;
+  }> = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="h-4 w-4" /> },
     { id: 'master_menu', label: 'Master Menu', icon: <BookOpen className="h-4 w-4" /> },
     { id: 'update_pm', label: 'Update PM', icon: <Users className="h-4 w-4" /> },
@@ -1080,9 +1391,67 @@ export default function App() {
     { id: 'kalender', label: 'Kalender & Hari Terlewat', icon: <Calendar className="h-4 w-4" /> },
     { id: 'arsip', label: 'Arsip Bulanan', icon: <Archive className="h-4 w-4" /> },
     { id: 'identitas', label: 'Identitas SPPG', icon: <Building2 className="h-4 w-4" /> },
+    ...(isAdmin
+      ? [
+          {
+            id: 'admin_panel' as WorkspaceTab,
+            label: 'Panel Admin Odhe Gizi',
+            icon: <ShieldCheck className="h-4 w-4" />,
+            badge: waitingUsersCount > 0 ? waitingUsersCount : undefined,
+          },
+        ]
+      : []),
   ];
 
   const photoReadyCount = entries.filter((e) => Boolean(e.photoDataUrl)).length;
+
+  const handleLoginWithGoogle = async () => {
+    await signInWithPopup(auth, googleProvider);
+  };
+
+  const handleLogout = async () => {
+    await signOut(auth);
+  };
+
+  if (authLoading || (authUser && !isAdmin && accessLoading)) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <div className="rounded-xl border border-slate-200 bg-white px-6 py-5 text-center space-y-2 max-w-sm w-full">
+          <div className="text-sm font-semibold text-slate-900">
+            Menyiapkan Ruang Kerja SPPG...
+          </div>
+          <p className="text-xs text-slate-500">
+            Memeriksa akun email aktif, status izin Admin Odhe Gizi, dan memulihkan sesi terakhir Anda.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return <LoginScreen onLoginWithGoogle={handleLoginWithGoogle} />;
+  }
+
+  if (!isAdmin && effectiveAccessState !== 'approved') {
+    return (
+      <WaitingApprovalScreen
+        email={authUser.email || ''}
+        displayName={authUser.displayName || ''}
+        accessRecord={accessRecord}
+        effectiveState={effectiveAccessState}
+        onLogout={handleLogout}
+        onRetrySync={async () => {
+          await recordUserLoginAttempt(authUser);
+        }}
+      />
+    );
+  }
+
+  const accessExpiryLabel = isAdmin
+    ? 'Admin Utama'
+    : accessRecord?.accessExpiresAt
+    ? `Aktif s/d ${formatShortDateId(accessRecord.accessExpiresAt)}`
+    : 'Aktif Tanpa Batas';
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col lg:flex-row">
@@ -1092,12 +1461,12 @@ export default function App() {
           <div className="font-display text-base font-bold tracking-tight text-slate-900">
             Rekapan Menu SPPG
           </div>
-          <p className="mt-1 truncate text-xs text-slate-500" title={profile.namaSppg}>
-            {profile.namaSppg}
+          <p className="mt-1 truncate text-xs text-slate-500" title={profile.namaSppg || 'SPPG'}>
+            {profile.namaSppg || 'Unit SPPG Baru'}
           </p>
         </div>
 
-        <nav className="flex-1 space-y-1 p-3">
+        <nav className="flex-1 space-y-1 p-3 overflow-y-auto">
           {navItems.map((item) => {
             const active = activeTab === item.id;
             return (
@@ -1105,41 +1474,72 @@ export default function App() {
                 key={item.id}
                 type="button"
                 onClick={() => setActiveTab(item.id)}
-                className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-xs font-medium transition-colors ${
+                className={`flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-left text-xs font-medium transition-colors ${
                   active
                     ? 'bg-emerald-50 text-emerald-800 font-semibold'
                     : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                 }`}
               >
-                {item.icon}
-                <span className="truncate">{item.label}</span>
+                <span className="flex items-center gap-2.5 min-w-0">
+                  {item.icon}
+                  <span className="truncate">{item.label}</span>
+                </span>
+                {item.badge !== undefined && (
+                  <span className="font-mono-num rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 shrink-0">
+                    {item.badge}
+                  </span>
+                )}
               </button>
             );
           })}
         </nav>
 
-        {/* Active SPPG Workspace Box */}
+        {/* Active Email & SPPG Workspace Box */}
         <div className="border-t border-slate-200 p-4 space-y-3">
+          <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2.5 space-y-0.5">
+            <div className="flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              <span>Email Aktif</span>
+              <span className="text-emerald-700">{accessExpiryLabel}</span>
+            </div>
+            <div className="truncate text-xs font-medium text-slate-900" title={authUser.email || ''}>
+              {authUser.email}
+            </div>
+          </div>
+
           <div className="flex items-start gap-2.5">
             <Building2 className="mt-0.5 h-4 w-4 text-emerald-600 shrink-0" />
             <div className="min-w-0">
               <div className="text-[11px] font-medium text-slate-500">Unit SPPG Aktif</div>
-              <div className="truncate text-xs font-semibold text-slate-900" title={profile.namaSppg}>
-                {profile.namaSppg}
+              <div
+                className="truncate text-xs font-semibold text-slate-900"
+                title={profile.namaSppg || 'Belum diisi'}
+              >
+                {profile.namaSppg || 'Belum diisi'}
               </div>
               <div className="font-mono-num mt-0.5 text-[11px] text-slate-500">
-                ID: {profile.idSppg}
+                ID: {profile.idSppg || '-'}
               </div>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setActiveTab('identitas')}
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors"
-          >
-            <Building2 className="h-3.5 w-3.5" />
-            Edit Identitas SPPG
-          </button>
+
+          <div className="grid grid-cols-1 gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab('identitas')}
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors"
+            >
+              <Building2 className="h-3.5 w-3.5" />
+              Edit Identitas SPPG
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleLogout()}
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-red-50 hover:text-red-700 hover:border-red-200 transition-colors"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Ganti Email / Keluar
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -1173,42 +1573,44 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() =>
-                setEditorModal({
-                  open: true,
-                  dateIso: nextDateForActiveMonth,
-                  entry: null,
-                })
-              }
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-medium text-slate-800 hover:bg-slate-50 whitespace-nowrap"
-            >
-              <CalendarPlus className="h-4 w-4 text-emerald-600" />
-              Tambah Menu
-            </button>
-            <button
-              type="button"
-              disabled={
-                activeTab !== 'master_menu' &&
-                activeTab !== 'foodcost' &&
-                activeTab !== 'update_pm' &&
-                activeTab !== 'rekap_bahan' &&
-                activeTab !== 'po_bahan' &&
-                activeTab !== 'sampel' &&
-                activeTab !== 'suhu' &&
-                activeTab !== 'freezer' &&
-                activeTab !== 'makanan' &&
-                entries.length === 0
-              }
-              onClick={handleDownloadPdf}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 whitespace-nowrap"
-            >
-              <Download className="h-4 w-4" />
-              Unduh PDF F4
-            </button>
-          </div>
+          {activeTab !== 'admin_panel' && (
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() =>
+                  setEditorModal({
+                    open: true,
+                    dateIso: nextDateForActiveMonth,
+                    entry: null,
+                  })
+                }
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-medium text-slate-800 hover:bg-slate-50 whitespace-nowrap"
+              >
+                <CalendarPlus className="h-4 w-4 text-emerald-600" />
+                Tambah Menu
+              </button>
+              <button
+                type="button"
+                disabled={
+                  activeTab !== 'master_menu' &&
+                  activeTab !== 'foodcost' &&
+                  activeTab !== 'update_pm' &&
+                  activeTab !== 'rekap_bahan' &&
+                  activeTab !== 'po_bahan' &&
+                  activeTab !== 'sampel' &&
+                  activeTab !== 'suhu' &&
+                  activeTab !== 'freezer' &&
+                  activeTab !== 'makanan' &&
+                  entries.length === 0
+                }
+                onClick={handleDownloadPdf}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 whitespace-nowrap"
+              >
+                <Download className="h-4 w-4" />
+                Unduh PDF F4
+              </button>
+            </div>
+          )}
         </header>
 
         {/* Mobile Drawer */}
@@ -1222,30 +1624,49 @@ export default function App() {
                   setActiveTab(item.id);
                   setMobileMenuOpen(false);
                 }}
-                className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium ${
+                className={`flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-xs font-medium ${
                   activeTab === item.id
                     ? 'bg-emerald-50 text-emerald-800 font-semibold'
                     : 'text-slate-600'
                 }`}
               >
-                {item.icon}
-                <span>{item.label}</span>
+                <span className="flex items-center gap-2.5 min-w-0">
+                  {item.icon}
+                  <span>{item.label}</span>
+                </span>
+                {item.badge !== undefined && (
+                  <span className="font-mono-num rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">
+                    {item.badge}
+                  </span>
+                )}
               </button>
             ))}
-            <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-2.5 px-2">
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2.5 px-2">
               <span className="text-xs text-slate-600 truncate">
-                {profile.namaSppg} · ID: {profile.idSppg}
+                {authUser.email} · {accessExpiryLabel}
               </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('identitas');
-                  setMobileMenuOpen(false);
-                }}
-                className="text-xs font-medium text-emerald-700"
-              >
-                Identitas SPPG
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('identitas');
+                    setMobileMenuOpen(false);
+                  }}
+                  className="text-xs font-medium text-emerald-700"
+                >
+                  Identitas SPPG
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    void handleLogout();
+                  }}
+                  className="text-xs font-medium text-red-700"
+                >
+                  Keluar
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -1665,8 +2086,21 @@ export default function App() {
 
           {activeTab === 'identitas' && (
             <SppgProfileForm
+              uid={workspaceUid}
               profile={profile}
               onSave={handleSaveProfile}
+            />
+          )}
+
+          {activeTab === 'admin_panel' && isAdmin && (
+            <AdminPanelView
+              adminEmail={authUser.email || ''}
+              users={allUsers}
+              usersLoading={allUsersLoading}
+              spreadsheetConfig={adminSpreadsheetConfig}
+              onUpdateUserAccess={updateUserAccessByAdmin}
+              onDeleteUserAccess={deleteUserAccessRecord}
+              onSaveSpreadsheetConfig={saveAdminSpreadsheetConfig}
             />
           )}
         </main>
@@ -1675,6 +2109,7 @@ export default function App() {
       {/* Entry Editor Modal */}
       {editorModal.open && (
         <EntryEditorModal
+          uid={workspaceUid}
           monthKey={activeMonthKey}
           initialDateIso={editorModal.dateIso}
           suggestedHariKe={suggestedHariKe}
@@ -1688,6 +2123,7 @@ export default function App() {
       {/* Nutrition Entry Modal */}
       {nutritionModalEntry && (
         <NutritionEntryModal
+          uid={workspaceUid}
           entry={nutritionModalEntry}
           selectedCategories={selectedCategories}
           onClose={() => setNutritionModalEntry(null)}

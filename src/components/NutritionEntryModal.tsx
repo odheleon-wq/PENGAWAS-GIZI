@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Copy, Save, X } from 'lucide-react';
 import {
   CATEGORY_MAP,
@@ -7,8 +7,15 @@ import {
 } from '../constants/nutritionCategories';
 import type { DailyMenuEntry, NutritionValues, TargetCategoryId } from '../types';
 import { formatIndonesianFullDate } from '../utils/dateUtils';
+import { useAutoSave } from '../hooks/useAutoSave';
+import {
+  clearScopedDraftBackup,
+  loadScopedDraftBackup,
+} from '../utils/sessionStorage';
+import { AutoSaveIndicator } from './AutoSaveIndicator';
 
 interface NutritionEntryModalProps {
+  uid?: string;
   entry: DailyMenuEntry;
   selectedCategories: TargetCategoryId[];
   onClose: () => void;
@@ -20,22 +27,67 @@ interface NutritionEntryModalProps {
 }
 
 export const NutritionEntryModal: React.FC<NutritionEntryModalProps> = ({
+  uid,
   entry,
   selectedCategories,
   onClose,
   onSave,
 }) => {
+  const effectiveUid = uid || entry.uid || 'local';
+  const scopeKey = `nutrition_modal:${entry.monthKey}:${entry.id}`;
+  const initialRecovered = useMemo(
+    () =>
+      loadScopedDraftBackup<{
+        namaMenu?: string;
+        nutritionMap?: Partial<Record<TargetCategoryId, NutritionValues>>;
+      }>(effectiveUid, scopeKey),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [effectiveUid, scopeKey]
+  );
+
   const initialActiveCat: TargetCategoryId =
     selectedCategories[0] || TARGET_CATEGORIES[3].id; // default Siswa SMP/MTS/SMPLB
 
   const [activeCat, setActiveCat] = useState<TargetCategoryId>(initialActiveCat);
-  const [namaMenu, setNamaMenu] = useState(entry.namaMenu);
+  const [namaMenu, setNamaMenu] = useState(initialRecovered?.namaMenu ?? entry.namaMenu);
   const [nutritionMap, setNutritionMap] = useState<
     Partial<Record<TargetCategoryId, NutritionValues>>
-  >(() => ({ ...(entry.nutritionByCategory || {}) }));
+  >(() => ({ ...(initialRecovered?.nutritionMap || entry.nutritionByCategory || {}) }));
   const [saving, setSaving] = useState(false);
   const [copiedNote, setCopiedNote] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const serverHash = useMemo(
+    () =>
+      JSON.stringify({
+        namaMenu: entry.namaMenu,
+        nutritionMap: entry.nutritionByCategory || {},
+      }),
+    [entry.namaMenu, entry.nutritionByCategory]
+  );
+
+  const draftValue = useMemo(
+    () => ({ namaMenu, nutritionMap }),
+    [namaMenu, nutritionMap]
+  );
+
+  const {
+    status: autoSaveStatus,
+    lastSavedAtLabel,
+    errorMessage: autoSaveError,
+    markSynced,
+  } = useAutoSave({
+    value: draftValue,
+    serverHash,
+    scopeKey,
+    uid: effectiveUid,
+    enabled: namaMenu.trim().length > 0,
+    onSave: async (val) => {
+      const menuChanged =
+        val.namaMenu.trim() !== entry.namaMenu.trim() ? val.namaMenu.trim() : undefined;
+      await onSave(entry.id, val.nutritionMap, menuChanged);
+    },
+  });
 
   const currentValues = nutritionMap[activeCat] || createEmptyNutritionValues();
 
@@ -71,11 +123,18 @@ export const NutritionEntryModal: React.FC<NutritionEntryModalProps> = ({
     try {
       const menuChanged = namaMenu.trim() !== entry.namaMenu.trim() ? namaMenu.trim() : undefined;
       await onSave(entry.id, nutritionMap, menuChanged);
+      markSynced(JSON.stringify(draftValue));
+      clearScopedDraftBackup(effectiveUid, scopeKey);
       onClose();
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Gagal menyimpan data nilai gizi.');
       setSaving(false);
     }
+  };
+
+  const handleDiscardAndClose = () => {
+    clearScopedDraftBackup(effectiveUid, scopeKey);
+    onClose();
   };
 
   const categoryTabs =
@@ -100,14 +159,21 @@ export const NutritionEntryModal: React.FC<NutritionEntryModalProps> = ({
               Menu otomatis tersinkron dengan Tabel Rekapan Nama Menu.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-            aria-label="Tutup"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-3">
+            <AutoSaveIndicator
+              status={autoSaveStatus}
+              lastSavedAtLabel={lastSavedAtLabel}
+              errorMessage={autoSaveError}
+            />
+            <button
+              type="button"
+              onClick={handleDiscardAndClose}
+              className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+              aria-label="Tutup"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
@@ -297,7 +363,7 @@ export const NutritionEntryModal: React.FC<NutritionEntryModalProps> = ({
           <div className="flex items-center justify-end gap-2 border-t border-slate-200 pt-4">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleDiscardAndClose}
               className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100"
             >
               Batal

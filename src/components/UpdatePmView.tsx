@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Copy,
   Download,
@@ -22,6 +22,12 @@ import type {
 import { formatIndonesianFullDate, getTodayIso } from '../utils/dateUtils';
 import { computePmSummary } from '../utils/foodCostCalculator';
 import { resolveDocumentLogos } from '../utils/logoResolver';
+import { useAutoSave } from '../hooks/useAutoSave';
+import {
+  clearScopedDraftBackup,
+  loadScopedDraftBackup,
+} from '../utils/sessionStorage';
+import { AutoSaveIndicator } from './AutoSaveIndicator';
 import { LogoUploadModal } from './LogoUploadModal';
 
 interface UpdatePmViewProps {
@@ -62,6 +68,27 @@ function guessCategoriesForSchool(nama: string): {
   return { besar: 'sd_4_6', kecil: 'tk_paud_lb' };
 }
 
+function serializePmRecord(r: DailyPmRecord): string {
+  return JSON.stringify({
+    dateIso: r.dateIso,
+    hariKe: r.hariKe,
+    headerLine1: r.headerLine1,
+    headerLine2: r.headerLine2,
+    headerLine3: r.headerLine3,
+    headerAlamat: r.headerAlamat,
+    titleSpecific: r.titleSpecific,
+    titleSummary: r.titleSummary,
+    logoDataUrl: r.logoDataUrl,
+    logoWidthPx: r.logoWidthPx,
+    logoRightDataUrl: r.logoRightDataUrl,
+    logoRightWidthPx: r.logoRightWidthPx,
+    followGlobalLeftLogo: r.followGlobalLeftLogo,
+    followGlobalRightLogo: r.followGlobalRightLogo,
+    specificRows: r.specificRows,
+    summaryOverrides: r.summaryOverrides,
+  });
+}
+
 export const UpdatePmView: React.FC<UpdatePmViewProps> = ({
   uid,
   profile,
@@ -74,7 +101,27 @@ export const UpdatePmView: React.FC<UpdatePmViewProps> = ({
   onSyncGlobalLeftLogo,
   onExportPdf,
 }) => {
-  const [subView, setSubView] = useState<'specific' | 'summary' | 'both'>('specific');
+  const subViewStorageKey = `sppg_pm_subview_v1:${uid}`;
+  const [subView, setSubView] = useState<'specific' | 'summary' | 'both'>(() => {
+    try {
+      const saved = window.localStorage.getItem(`sppg_pm_subview_v1:${uid}`);
+      if (saved === 'specific' || saved === 'summary' || saved === 'both') {
+        return saved;
+      }
+    } catch {
+      // Ignore storage error
+    }
+    return 'specific';
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(subViewStorageKey, subView);
+    } catch {
+      // Ignore storage error
+    }
+  }, [subViewStorageKey, subView]);
+
   const [showHeaderEdit, setShowHeaderEdit] = useState(false);
   const [saving, setSaving] = useState(false);
   const [logoModalSide, setLogoModalSide] = useState<'left' | 'right' | null>(null);
@@ -89,32 +136,81 @@ export const UpdatePmView: React.FC<UpdatePmViewProps> = ({
     [pmRecords, activeDateIso]
   );
 
-  const [draft, setDraft] = useState<DailyPmRecord>(() =>
-    existingRecord ||
-    getDefaultDailyPmRecord(
-      uid,
-      monthKey,
-      activeDateIso,
-      matchedEntry?.hariKe || 1,
-      profile
-    )
+  const serverBase = useMemo(
+    () =>
+      existingRecord ||
+      getDefaultDailyPmRecord(
+        uid,
+        monthKey,
+        activeDateIso,
+        matchedEntry?.hariKe || 1,
+        profile
+      ),
+    [existingRecord, uid, monthKey, activeDateIso, matchedEntry?.hariKe, profile]
   );
 
+  const serverHash = useMemo(() => serializePmRecord(serverBase), [serverBase]);
+  const scopeKey = `update_pm:${monthKey}:${activeDateIso}`;
+
+  const [draft, setDraft] = useState<DailyPmRecord>(() => {
+    const recovered = loadScopedDraftBackup<DailyPmRecord>(uid, scopeKey);
+    return recovered || serverBase;
+  });
+
+  const lastScopeRef = useRef<string>(scopeKey);
+  const lastServerHashRef = useRef<string>(serverHash);
+  const currentDraftRef = useRef<DailyPmRecord>(draft);
+  currentDraftRef.current = draft;
+
   useEffect(() => {
-    if (existingRecord) {
-      setDraft(existingRecord);
-    } else {
-      setDraft(
-        getDefaultDailyPmRecord(
-          uid,
-          monthKey,
-          activeDateIso,
-          matchedEntry?.hariKe || 1,
-          profile
-        )
-      );
+    const scopeChanged = lastScopeRef.current !== scopeKey;
+    if (scopeChanged) {
+      lastScopeRef.current = scopeKey;
+      const recovered = loadScopedDraftBackup<DailyPmRecord>(uid, scopeKey);
+      setDraft(recovered || serverBase);
+      lastServerHashRef.current = serverHash;
+      return;
     }
-  }, [existingRecord, uid, monthKey, activeDateIso, matchedEntry?.hariKe, profile]);
+
+    const isClean = serializePmRecord(currentDraftRef.current) === lastServerHashRef.current;
+    if (isClean) {
+      setDraft(serverBase);
+    }
+    lastServerHashRef.current = serverHash;
+  }, [scopeKey, uid, serverBase, serverHash]);
+
+  const {
+    status: autoSaveStatus,
+    lastSavedAtLabel,
+    errorMessage: autoSaveError,
+    markSynced,
+  } = useAutoSave<DailyPmRecord>({
+    value: draft,
+    serverHash,
+    scopeKey,
+    uid,
+    serialize: serializePmRecord,
+    onSave: async (val) => {
+      await onSaveRecord({
+        dateIso: val.dateIso,
+        hariKe: val.hariKe,
+        headerLine1: val.headerLine1,
+        headerLine2: val.headerLine2,
+        headerLine3: val.headerLine3,
+        headerAlamat: val.headerAlamat,
+        titleSpecific: val.titleSpecific,
+        titleSummary: val.titleSummary,
+        logoDataUrl: val.logoDataUrl,
+        logoWidthPx: val.logoWidthPx,
+        logoRightDataUrl: val.logoRightDataUrl,
+        logoRightWidthPx: val.logoRightWidthPx,
+        followGlobalLeftLogo: val.followGlobalLeftLogo,
+        followGlobalRightLogo: val.followGlobalRightLogo,
+        specificRows: val.specificRows,
+        summaryOverrides: val.summaryOverrides,
+      });
+    },
+  });
 
   const pmSummary = useMemo(() => computePmSummary(draft), [draft]);
 
@@ -152,6 +248,8 @@ export const UpdatePmView: React.FC<UpdatePmViewProps> = ({
         specificRows: next.specificRows,
         summaryOverrides: next.summaryOverrides,
       });
+      markSynced(serializePmRecord(next));
+      clearScopedDraftBackup(uid, scopeKey);
     } finally {
       setSaving(false);
     }
@@ -309,6 +407,11 @@ export const UpdatePmView: React.FC<UpdatePmViewProps> = ({
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <AutoSaveIndicator
+              status={autoSaveStatus}
+              lastSavedAtLabel={lastSavedAtLabel}
+              errorMessage={autoSaveError}
+            />
             <button
               type="button"
               onClick={() => setShowHeaderEdit((v) => !v)}
